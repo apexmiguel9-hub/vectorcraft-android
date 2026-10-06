@@ -74,6 +74,9 @@
 use vectorcraft_engine::Session;
 use vectorcraft_ui_egui::{Services, VectorcraftApp};
 
+#[cfg(target_os = "android")]
+mod saf;
+
 /// El `eframe::App` del port. Tres reenvios, porque todo el editor —50k lineas de
 /// UI, 52 paneles, menus, canvas, atajos— ya vive en `VectorcraftApp`.
 pub struct App(pub VectorcraftApp);
@@ -99,7 +102,12 @@ impl eframe::App for App {
 /// Cada hueco degrada a un mensaje en vez de romper, que es el mismo camino que usa
 /// la build web.
 pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn eframe::App>, String> {
-    Ok(Box::new(App(VectorcraftApp::new(Session::new(), Services::default()))))
+    #[cfg(target_os = "android")]
+    let services = saf::services();
+    #[cfg(not(target_os = "android"))]
+    let services = Services::default();
+
+    Ok(Box::new(App(VectorcraftApp::new(Session::new(), services))))
 }
 
 /// Opciones de ventana.
@@ -325,6 +333,12 @@ pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidA
         // proceso asociado si aparece, y no cuesta nada.
         eprintln!("PANIC de Rust: {info}");
     }));
+
+    // MEDIDO: SAF necesita el `JavaVM`, y `android-activity` solo lo expone a traves
+    // del `AndroidApp`. Se registra aqui, antes de construir las opciones, porque
+    // `Services::read`/`write` lo consultan en cuanto el usuario abre un fichero.
+    #[cfg(target_os = "android")]
+    saf::registrar(&app);
 
     // El `AndroidApp` va DENTRO de las opciones, no como argumento aparte: es lo que
     // el `EventLoop` de winit necesita para construirse, y sin el se queda sin

@@ -42,10 +42,29 @@ vectorcraft-render = { workspace = true }
 # Android moderno— y `game-activity` lo arregla. Se deja pendiente a proposito:
 # primero que la app abra, despues el teclado. Ver el comentario del modulo.
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
+
+
+# MEDIDO: para mover bytes entre Rust y el `ContentResolver` en base64, con las
+# mismas funciones que usa el motor para sus parametros (`{name, dataBase64}`), de
+# modo que el formato es el del proyecto y no uno inventado aqui.
+vectorcraft-format = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
+# MEDIDO: SAF necesita JNI, y solo en Android. Va en el bloque del target y no en
+# `[dependencies]` a proposito: `jni` es FFI a la JVM y en una build de escritorio no
+# lo usa nadie, asi que debe quedar fuera del grafo.
+#
+# MEDIDO que no amplia el grafo: `jni` 0.22.4 **ya esta dentro** como dependencia de
+# `android-activity`, que es la que usa la feature `android-native-activity`. Anadirla
+# aqui como directa no baja nada nuevo.
+#
+# Se eligio la 0.22 y no la 0.21 porque su API de `Env` es la unica que se ha podido
+# comprobar leyendo el codigo del crate: `attach_current_thread_for_scope`,
+# `new_string`, `get_string`, `find_class`, `exception_check/describe/clear`, y
+# `call_static_method` con los macros `jni_str!` y `jni_sig!`.
+jni = "0.22"
 # `AndroidApp` viene de aqui, y es lo que `android_main` recibe.
 winit = { workspace = true }
 android-activity = { version = "0.6", default-features = false, features = ["native-activity"] }

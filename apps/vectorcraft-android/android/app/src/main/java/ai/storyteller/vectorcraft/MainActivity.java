@@ -1,13 +1,22 @@
 package ai.storyteller.vectorcraft;
 
 import android.app.NativeActivity;
+import android.content.ContentResolver;
+import android.content.Intent;
+import android.graphics.Insets;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 
 /**
  * El Activity de VectorCraft en Android.
  *
- * Hereda de {@link NativeActivity} y no hace nada mas: la libreria nativa toma el
- * control desde {@code android_main}.
+ * Hereda de {@link NativeActivity} y hace dos cosas: deja que la libreria nativa
+ * tome el control desde {@code android_main}, y habla con Android en nombre de Rust
+ * para el Storage Access Framework.
  *
  * <h2>Por que Java y no Kotlin</h2>
  *
@@ -42,18 +51,341 @@ import android.os.Bundle;
  * {@code androidx.games:games-activity:4.4.0}. Ver el comentario de
  * {@code apps/vectorcraft-android/src/lib.rs}.
  *
- * <h2>Si la libreria faltara</h2>
+ * <h2>SAF</h2>
  *
- * El fallo sale aqui como {@code UnsatisfiedLinkError}, que es el primer sitio
- * donde se ve un APK mal empaquetado. Por eso el CI comprueba con {@code unzip -l}
- * que la libreria va dentro del APK antes de darlo por bueno — y por eso el APK se
- * comprueba tambien con {@code aapt}: un APK que existe y no lleva la clase es
- * exactamente este caso.
+ * MEDIDO: VectorCraft <b>no</b> trae explorador de ficheros propio, y su
+ * {@code rfd} no sirve en Android: las dependencias de {@code rfd} 0.17.2 no
+ * incluyen {@code jni} ni {@code ndk-context}, o sea que sus backends son macOS,
+ * Windows, wayland/xdg y web, y en Android no hay ninguno. Asi que SAF es
+ * obligatorio y esta es su implementacion.
+ *
+ * El "path" de VectorCraft es una cadena opaca y la UI lee y escribe por los
+ * ganchos {@code Services::read} / {@code Services::write}
+ * ({@code crates/ui-egui/src/io.rs}). Aqui esa cadena es un
+ * {@code content://} URI y se resuelve con {@link ContentResolver}. Por eso
+ * <b>no hace falta ni copiar ficheros ni pedir permiso de almacenamiento</b>: SAF
+ * esta disenado justo para no dar acceso general al almacenamiento, y el
+ * almacenamiento privado de la app tampoco lo necesita.
+ *
+ * <h2>El bloqueo y por que no hay deadlock</h2>
+ *
+ * Los ganchos de fichero son sincronos ({@code FnMut(&FilePick) -> Option<String>}),
+ * igual que en escritorio. Lanzar el selector de Android es otra Activity, asi que
+ * el hilo de Rust tiene que esperar.
+ *
+ * MEDIDO: el hilo que dibuja la UI en Android es el mismo que despacha los eventos
+ * de winit, asi que <b>esperar aqui sin mas deadlock</b>: el resultado nunca llegaria.
+ *
+ * Lo que lo evita es que el despertar lo manda <b>Java</b>, desde
+ * {@code onActivityResult}, en el hilo de la UI de Android, llamando a
+ * {@link #nativeOnFilePicked()}. Ese camino no pasa por winit. Rust solo
+ * espera en una variable de condicion.
  */
 public class MainActivity extends NativeActivity {
+    private static final String TAG = "VectorCraft";
+    /** Request code del selector de ficheros. Debe caber en los 16 bits bajos. */
+    private static final int RC_PICK = 0x5643; // 'VC'
+
+    // Modos de `request`, los mismos numeros que en `saf.rs`.
+    static final int MODE_OPEN = 0;
+    static final int MODE_OPEN_MULTI = 1;
+    static final int MODE_SAVE = 2;
+    static final int MODE_OPEN_TREE = 3;
+
+    private static MainActivity instance;
+
+    /**
+     * El resultado del ultimo selector, a la espera de que Rust lo recoja.
+     *
+     * MEDIDO por que NO se pasa el URI como argumento del callback: para leer un
+     * {@code jstring} dentro de la funcion JNI hace falta un {@code Env}, y en
+     * `jni` 0.22 `Env::from_raw` con su lifetime hace que eso se
+     * convierta en un error de compilacion. Guardandolo aqui y dejandolo a Rust la
+     * lectura de la cadena, Rust lo recoge con un `Env` de verdad, que si esta
+     * comprobado que funciona.
+     */
+    private static String lastResult;
+
+    /**
+     * Llega el resultado de un selector. {@code uri} es {@code null} si el usuario
+     * cancelo. La implementa {@code apps/vectorcraft-android/src/saf.rs}.
+     *
+     * MEDIDO: tiene que ser {@code static}, para que el simbolo JNI sea
+     * {@code Java_ai_storyteller_vectorcraft_MainActivity_nativeOnFilePicked} y lo
+     * resuelva {@code System.loadLibrary} sin registrar nada a mano.
+     */
+    private static native void nativeOnFilePicked();
+
+    /** Guarda el resultado y despierta a Rust, que esta esperando. */
+    private static void publicar(String uri) {
+        lastResult = uri;
+        Log.i(TAG, "selector: " + (uri == null ? "cancelado" : uri));
+        nativeOnFilePicked();
+    }
+
+    /** Rust recoge el resultado. Lo vacia, para no repetirlo. */
+    private static String takeResult() {
+        String r = lastResult;
+        lastResult = null;
+        return r;
+    }
+
+    /**
+     * Rust pide abrir el selector. Se devuelve de inmediato; el resultado llega a
+     * {@link #nativeOnFilePicked}.
+     *
+     * @param mode  uno de los {@code MODE_*}
+     * @param title titulo del selector
+     * @param mimes MIME types separados por comas, ya traducidos desde las extensiones
+     * @return {@code null}, o el error si la Activity no esta lista
+     */
+    private static String request(int mode, String title, String mimes) {
+        MainActivity a = instance;
+        if (a == null) {
+            return "la Activity no esta lista todavia";
+        }
+        // MEDIDO: `startActivityForResult` tiene que correr en el hilo de la UI. Rust
+        // llama a esto desde el hilo de winit, y sin esto salta
+        // `CalledFromWrongThreadException`.
+        a.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                a.startPicker(mode, title, mimes);
+            }
+        });
+        return null;
+    }
+
+    private void startPicker(int mode, String title, String mimes) {
+        Intent intent;
+        if (mode == MODE_OPEN_TREE) {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        } else if (mode == MODE_SAVE) {
+            intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE);
+        } else if (mode == MODE_OPEN_MULTI) {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        } else {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE);
+        }
+
+        // MEDIDO: sin estos dos flags el permiso es solo temporal y
+        // `takePersistableUriPermission` falla con `SecurityException`. Es lo que
+        // permite que un fichero abierto siga siendo legible **despues de cerrar y
+        // volver a abrir la app**, que es lo que necesita `note_recent`.
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+        String[] types = mimes == null || mimes.isEmpty() ? null : mimes.split(",");
+        if (types != null && types.length > 0) {
+            // `setType` con varios no vale: hay que dar el mas general y luego
+            // `EXTRA_MIME_TYPES`, que es la via que SAF entiende de verdad.
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, types);
+        }
+        if (title != null && !title.isEmpty()) {
+            intent.putExtra(Intent.EXTRA_TITLE, title);
+        }
+        try {
+            startActivityForResult(intent, RC_PICK);
+        } catch (Exception e) {
+            Log.e(TAG, "el selector no arranca: " + e);
+            publicar(null);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != RC_PICK) {
+            return;
+        }
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            publicar(null);
+            return;
+        }
+
+        // MEDIDO: `ACTION_OPEN_DOCUMENT` con `EXTRA_ALLOW_MULTIPLE` devuelve el
+        // primero en `getData()` y el resto en `getClipData()`. Sin esto solo se
+        // abriria uno de los N.
+        StringBuilder uris = new StringBuilder();
+        java.util.ArrayList<Uri> all = new ArrayList<>();
+        ClipDataHolder holder = collect(data);
+        if (holder != null) {
+            for (int i = 0; i < holder.count; i++) {
+                all.add(holder.items.get(i));
+            }
+        }
+        if (all.isEmpty()) {
+            publicar(null);
+            return;
+        }
+        for (Uri u : all) {
+            if (uris.length() > 0) {
+                uris.append('\n');
+            }
+            uris.append(u.toString());
+        }
+
+        // El permiso persistente, por cada URI. Sin esto, la segunda vez que se
+        // abra uno de estos ficheros desde "recientes" salta `SecurityException`.
+        for (Uri u : all) {
+            persist(u, data.getFlags());
+        }
+        publicar(uris.toString());
+    }
+
+    /** Estructura minima para no arrastrar `ClipData` a la firma. */
+    private static final class ClipDataHolder {
+        final int count;
+        final java.util.List<Uri> items;
+
+        ClipDataHolder(int count, java.util.List<Uri> items) {
+            this.count = count;
+            this.items = items;
+        }
+    }
+
+    private static ClipDataHolder collect(Intent data) {
+        java.util.List<Uri> list = new java.util.ArrayList<>();
+        android.content.ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                Uri u = clip.getItemAt(i).getUri();
+                if (u != null) {
+                    list.add(u);
+                }
+            }
+        } else if (data.getData() != null) {
+            list.add(data.getData());
+        }
+        return list.isEmpty() ? null : new ClipDataHolder(list.size(), list);
+    }
+
+    private void persist(Uri u, int resultFlags) {
+        int flags = resultFlags & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        if (flags == 0) {
+            // El proveedor no devolvio flags: se Assume lectura, que es lo que
+            // necesita un fichero abierto.
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+        }
+        try {
+            getContentResolver().takePersistableUriPermission(u, flags);
+        } catch (Exception e) {
+            // No todos los proveedores lo dan. Se avisa y se sigue: el fichero sera
+            // leible mientras la app viva, y solo fallara al reabrirlo en otra
+            // sesion, que es mejor que negarse a abrirlo.
+            Log.w(TAG, "sin permiso persistente para " + u + ": " + e);
+        }
+    }
+
+    /**
+     * Lee un fichero por su URI y lo devuelve en base64.
+     *
+     * <p>MEDIDO por que base64 y no {@code byte[]}: la API de JNI de Rust que lee un
+     * array de bytes pide un {@code AsRef<JByteArray>}, y de un {@code JObject}
+     * devuelto por una llamada solo se llega a uno pasando por {@code from_raw}, que es
+     * {@code unsafe} y en {@code jni} 0.24 implica pelear con los lifetimes del
+     * {@code Env}. Las cadenas si estan comprobadas. Y el propio motor ya mueve bytes
+     * en base64 por sus parametros ({@code {name, dataBase64}}), asi que el formato es
+     * el del proyecto.
+     *
+     * @return los bytes en base64, o lanza con el mensaje de Android
+     */
+    private static String readBase64(String uri) {
+        try {
+            ContentResolver cr = instance.getContentResolver();
+            Uri u = Uri.parse(uri);
+            try (java.io.InputStream in = cr.openInputStream(u)) {
+                if (in == null) {
+                    throw new IllegalStateException("el proveedor no abre " + uri);
+                }
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(1 << 16);
+                byte[] buf = new byte[1 << 16];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                }
+                return android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP);
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(uri + ": " + e, e);
+        }
+    }
+
+    /**
+     * Escribe un fichero por su URI. Lo llama Rust desde {@code Services::write}.
+     *
+     * MEDIDO: se escribe con un buffer y se cierra explicitamente, en vez de dejar
+     * que el {@code ContentResolver} lo haga por su cuenta. Un fichero a medias es
+     * peor que un fallo: el motor avisa de que nunca escribe a medias, y aqui no hay
+     * escritura atomica posible con SAF, asi que al menos se garantiza que el
+     * buffer llega entero o que el error es explicito.
+     */
+    private static void writeBase64(String uri, String base64) {
+        byte[] data = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP);
+        try {
+            ContentResolver cr = instance.getContentResolver();
+            Uri u = Uri.parse(uri);
+            java.io.OutputStream out = cr.openOutputStream(u, "wt");
+            if (out == null) {
+                // MEDIDO: algunos proveedores no aceptan el modo "wt" y con "w"
+                // los añade al final en vez de truncarlos, que un fichero de
+                // documento nunca quiere.
+                out = cr.openOutputStream(u, "w");
+            }
+            if (out == null) {
+                throw new IllegalStateException("el proveedor no escribe " + uri);
+            }
+            try {
+                out.write(data);
+                out.flush();
+            } finally {
+                out.close();
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(uri + ": " + e, e);
+        }
+    }
+
+    /**
+     * El nombre que DocumentsUI muestra para un URI. Lo usa Rust para el titulo del
+     * documento, que con un URI entero seria ilegible.
+     *
+     * @return el nombre, o {@code null} si no se puede
+     */
+    private static String displayName(String uri) {
+        try {
+            String n = instance.getContentResolver()
+                    .query(Uri.parse(uri), new String[] { android.provider.OpenableColumns.DISPLAY_NAME },
+                            null, null, null)
+                    .let(c -> {
+                        try (android.database.Cursor cur = c) {
+                            if (cur != null && cur.moveToFirst()) {
+                                return cur.getString(0);
+                            }
+                        }
+                        return null;
+                    });
+            return n;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
 
         // ------------------------------------------------------------------
         // Que la ventana respete las barras del sistema.
@@ -72,11 +404,7 @@ public class MainActivity extends NativeActivity {
         // notch, o sea que **si** lo respeta— y **1080 de alto enteros, que es la
         // pantalla completa con los 59 de la barra de estado dentro**. De ahi el
         // `y = -13.5`: el borde superior del dialogo cae bajo la barra de
-        // notificaciones, y las pestañas de plantillas (Mobile, Web, Print...)
-        // quedan pegadas al reloj.
-        //
-        // Y el ancho util no son 937 puntos sino `937 - 115/2.4375 - 117/2.4375 =
-        // 842`, que es por lo que el dialogo, que pedia 913, se salia por la derecha.
+        // notificaciones, y las pestañas de plantillas quedan pegadas al reloj.
         //
         // MEDIDO tambien: winit 0.30 **no rellena `safe_area_insets` en Android**.
         // Solo lo hace en iOS:
@@ -85,31 +413,28 @@ public class MainActivity extends NativeActivity {
         //     winit-0.30.13/src/platform_impl/ios/app_state.rs
         //     winit-0.30.13/src/platform_impl/ios/window.rs
         //
-        // Asi que `egui` recibe ceros y no puede reservar nada por su cuenta. La
-        // ventana tiene que estar bien colocada antes.
-        //
-        // Comprobado tambien que `android-activity` **no** pone este flag al
-        // arrancar: `LAYOUT_NO_LIMITS` solo aparece como constante y en el metodo
-        // `AndroidApp::set_window_flags`, que nadie llama. Se quita igual, porque
-        // ponerlo es idempotente y deja constancia de la intencion.
-        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        // Y MEDIDO que los flags **no** redimensionan la superficie: tras ponerlos,
+        // el viewport que ve egui seguia siendo de 937.4 x 443.1 puntos, o sea 1080
+        // de alto enteros. Con `NativeActivity` el buffer que ve winit no cambia, asi
+        // que la UI no puede reservar nada por su cuenta. Por eso los ultimos 48
+        // puntos a la derecha siguen bajo la barra de gestos: hace falta pasarle los
+        // insets a egui por JNI, que es lo siguiente.
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
 
         // API 30+: sustituye a `FLAG_LAYOUT_NO_LIMITS` su equivalente moderno. Con
         // `minSdk 24` hace falta el guard: `setDecorFitsSystemWindows` no existe
         // antes.
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(true);
         }
 
         // Y que el propio sistema diga cuales son, por logcat. Es la unica forma de
-        // saber si lo de arriba ha funcionado sin adivinar: si el viewport que ve
-        // egui sigue siendo 1080 de alto, aqui saldra un aviso.
+        // saber si lo de arriba ha funcionado sin adivinar.
         getWindow().getDecorView().setOnApplyWindowInsetsListener((v, insets) -> {
             int l, t, r, b;
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                android.graphics.Insets bars =
-                        insets.getInsets(android.view.WindowInsets.Type.systemBars()
-                                | android.view.WindowInsets.Type.displayCutout());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
                 l = bars.left;
                 t = bars.top;
                 r = bars.right;
@@ -126,5 +451,11 @@ public class MainActivity extends NativeActivity {
                     + " | density=" + d);
             return insets;
         });
+    }
+
+    @Override
+    protected void onDestroy() {
+        instance = null;
+        super.onDestroy();
     }
 }
