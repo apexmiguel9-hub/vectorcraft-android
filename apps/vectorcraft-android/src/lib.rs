@@ -237,7 +237,18 @@ fn window_options() -> eframe::NativeOptions {
         // el motor de VectorCraft rasteriza en CPU con `vello_cpu`, asi que la GPU
         // solo presenta pixeles y no tiene nada que hacer con esto. Passarse por
         // OpenGL no cuesta nada al dibujo.
-        renderer: eframe::Renderer::Wgpu { wgpu_configuration: wgpu_solo_opengl() },
+        // MEDIDO: en eframe 0.36 `Renderer::Wgpu` es una variante **unitaria**, no
+        // lleva configuracion dentro. Sale:
+        //
+        //     error[E0559]: variant `eframe::Renderer::Wgpu` has no field named
+        //                    `wgpu_configuration`
+        //
+        // La configuracion va en su propio campo de `NativeOptions`:
+        //
+        //     /// Configures wgpu instance/device/adapter/surface creation and renderloop.
+        //     pub wgpu_options: egui_wgpu::WgpuConfiguration,
+        renderer: eframe::Renderer::Wgpu,
+        wgpu_options: wgpu_solo_opengl(),
         ..Default::default()
     }
 }
