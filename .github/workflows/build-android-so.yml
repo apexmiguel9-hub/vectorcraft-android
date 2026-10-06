@@ -190,14 +190,28 @@ jobs:
             || echo "::warning::no se ve ningun simbolo de entrada de JNI"
 
           echo
-          echo "=== cuantos simbolos exporta ==="
-          TOTAL=$("$NM" -D --defined-only "$SO" | wc -l)
-          echo "### $TOTAL simbolos dinamicos"
-          # Un enlazador que se come codigo por error deja una tabla_EXPORT seccion
-          # sospechosamente corta. Cientos de miles es lo normal para una app de
-          # este tamano; por debajo de 10000 seria que algo se ha roto.
-          [ "$TOTAL" -gt 10000 ] || {
-            echo "::error::solo $TOTAL simbolos dinamicos: la libreria parece incompleta"
+          echo "=== simbolos de entrada ==="
+          # `android_main` es lo que llama winit. Es lo unico que hay que exportar:
+          # en un `cdylib` de Rust solo sale de la tabla dinamica lo que lleva
+          # `#[no_mangle]`, y eso es lo correcto, no un sintoma de que falte codigo.
+          "$NM" -D --defined-only "$SO" | grep -w android_main \
+            || { echo "::error::la .so no exporta android_main: no arranca"; exit 1; }
+          echo "OK: android_main exportado"
+
+          echo
+          echo "=== cuanto codigo hay de verdad ==="
+          # MEDIDO, y este es el numero que importa. Se empezaba mirando el numero
+          # de simbolos dinamicos, y es mirar donde no hay nada: un `cdylib` exporta
+          # solo lo que lleva `#[no_mangle]`.
+          #
+          # La `.so` vacia (sin `#[no_mangle]`, con el enlazador tirando el codigo
+          # que no era alcanzable) daba  566 KB de `.text`.
+          # La misma `.so` con el punto de entrada: **34 MB** de `.text`.
+          TEXT=$("$SIZE" -A -d "$SO" | awk '$1==".text"{print $2}')
+          echo "### .text = $TEXT bytes ($((TEXT / 1000000)) MB)"
+          [ "$TEXT" -gt 5000000 ] || {
+            echo "::error::solo $TEXT bytes de .text: el enlazador se ha comido el codigo."
+            echo "::error::suele ser que falta el #[no_mangle] del punto de entrada."
             exit 1
           }
           echo "OK: la libreria esta entera"
