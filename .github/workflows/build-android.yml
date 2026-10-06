@@ -102,7 +102,18 @@ jobs:
       - name: Poner el SDK de Android en el PATH
         # MEDIDO: sin este paso, `sdkmanager` da exit 127 y el error no menciona ni
         # el NDK ni el SDK.
+        #
+        # MEDIDO: NO se deja `packages` con su valor por defecto. Instala `tools`, que
+        # ya no existe en el SDK moderno, y el paso muere con:
+        #   Warning: Failed to find package 'tools'
+        #   Error: ...sdkmanager failed with exit code 1
+        # que no menciona nada de NDK. Solo hace falta `platform-tools`, que ya viene
+        # en la imagen del runner.
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: true
 
       - name: Instalar el NDK
         # La version tiene que coincidir con `ndkVersion` de app/build.gradle. Si no
@@ -165,12 +176,25 @@ jobs:
           ls -la app/src/main/jniLibs/arm64-v8a/
           chmod +x gradlew 2>/dev/null || true
 
+      - name: Fijar la versión de Gradle
+        # MEDIDO que hace falta: el proyecto no lleva `gradle/wrapper`, y la versión de
+        # Gradle que trae la imagen del runner no coincide con la que pide el plugin de
+        # Android. El fallo de eso es un mensaje que habla de "AGP requires Gradle
+        # 8.7" y no de Gradle, que es facil atribuir a otra cosa.
+        #
+        # En vez de subir el wrapper al repo (un `.jar` binario), se genera aqui. Es lo
+        # mismo y no ensucia el arbol con un binario.
+        working-directory: apps/vectorcraft-android/android
+        run: |
+          gradle wrapper --gradle-version 8.9 --distribution-type bin
+          ./gradlew --version | head -5
+
       - name: Construir con Gradle
         working-directory: apps/vectorcraft-android/android
         env:
           ANDROID_NDK_HOME: ${{ env.NDK_DIR }}
         run: |
-          gradle --no-daemon assembleDebug
+          ./gradlew --no-daemon assembleDebug
 
       - name: Comprobar que el APK lleva el .so dentro
         # MEDIDO: el fallo mas comun de un port de Android. El .so se compila bien,
