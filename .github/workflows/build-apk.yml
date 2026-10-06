@@ -186,10 +186,29 @@ jobs:
           APK=apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk
           PATRON="ai/storyteller/vectorcraft/MainActivity"
 
-          unzip -p "$APK" classes.dex classes2.dex > /tmp/todos.dex
-          if grep -aq "$PATRON" /tmp/todos.dex; then
-            echo "OK: la clase esta en el APK"
+          # MEDIDO que hace falta el bucle, y no vale con una linea:
+          #
+          #     unzip -p "$APK" classes.dex classes2.dex > todos.dex
+          #
+          # con varios ficheros solo extrae **el primero**. En un APK con multidex
+          # eso deja fuera justo donde suele estar la clase, y da un fallo inventado:
+          # el APK era correcto y esta comprobacion lo daba por roto.
+          #
+          # Instrumentacion que da un falso negativo es peor que no tenerla: para el
+          # porque el error no existe.
+          ENCONTRADA=""
+          for D in $(unzip -l "$APK" | awk '{print $4}' | grep -E '^classes[0-9]*\.dex$'); do
+            unzip -p "$APK" "$D" > /tmp/uno.dex
+            if grep -aq "$PATRON" /tmp/uno.dex; then
+              ENCONTRADA="$D"
+              break
+            fi
+          done
+
+          if [ -n "$ENCONTRADA" ]; then
+            echo "OK: la clase esta en $ENCONTRADA"
           else
+            echo "dex del APK:"; unzip -l "$APK" | awk '{print $4}' | grep -E '\.dex$'
             echo "::error::el APK NO lleva la clase ai.storyteller.vectorcraft.MainActivity"
             echo "::error::Si el Activity esta en Kotlin falta el plugin de Kotlin:"
             echo "::error::    apply plugin: 'org.jetbrains.kotlin.android'"
