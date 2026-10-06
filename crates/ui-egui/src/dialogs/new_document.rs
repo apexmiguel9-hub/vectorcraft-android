@@ -177,16 +177,20 @@ fn window(ctx: &egui::Context, id: &str, margin: i8, add: impl FnOnce(&mut egui:
         .anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0])
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(margin)))
         .show(ctx, add);
-    // MEASURED, and it is here because the first attempt at fitting this dialog to
-    // the screen was wrong and the only reason to know it is wrong is the number.
-    // `log::info!` rather than a comment: two of the three sizes involved
-    // (`content_rect`, and whatever the frame/margin rules end up adding on top)
-    // are not knowable without asking egui at runtime, and guessing them is what
-    // produced the 19pt overflow in the first place.
+    // MEASURED, and it is here because this dialog got the fit-to-screen wrong twice
+    // and the only thing that settles it is the number. `content_rect` is not
+    // knowable without asking egui at runtime, and the frame/margin rules add more on
+    // top than the arithmetic assumes; guessing is what caused a 19pt overflow.
+    //
+    // MEDIDO: there is no `screen_rect()` on `egui::Context` in 0.36, it is
+    // `viewport_rect()`:
+    //
+    //     error[E0599]: no method named `screen_rect` found for reference
+    //                   `&egui::Context` in the current scope
     if let Some(r) = resp {
         log::info!(
-            "dialog {id}: pantalla {:?}, hueco {:?}, ventana {:?}",
-            ctx.screen_rect(), ctx.content_rect(), r.response.rect
+            "dialog {id}: viewport {:?}, hueco {:?}, ventana {:?}",
+            ctx.viewport_rect(), ctx.content_rect(), r.response.rect
         );
     }
 }
