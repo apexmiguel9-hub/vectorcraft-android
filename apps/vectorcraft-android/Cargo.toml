@@ -5,8 +5,26 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-[lints]
-workspace = true
+# MEDIDO: aqui NO se heredan los lints del workspace, a proposito.
+#
+# El workspace prohibe `unsafe_code = "deny"`, y un punto de entrada de Android lo
+# necesita:
+#
+#     error: usage of unsafe attribute
+#        --> apps/vectorcraft-android/src/lib.rs:131:3
+#
+# En Rust moderno `#[no_mangle]` es un atributo `unsafe`, asi que hace falta
+# `#[unsafe(no_mangle)]`, y el lint lo marca igual porque el bloque de abajo es
+# `extern "C"`.
+#
+# El ejemplo oficial de egui hace exactamente esto mismo (`hello_android`): su
+# `Cargo.toml` trae comentados los `[lints] workspace = true` con el motivo
+# "unsafe_code is required for #[no_mangle]".
+#
+# El resto de codigo del crate no usa `unsafe`: solo esta firma. Es el unico sitio
+# del proyecto entero donde hace falta.
+# [lints]
+# workspace = true
 
 [dependencies]
 vectorcraft-engine = { workspace = true }

@@ -127,8 +127,12 @@ pub fn run() -> eframe::Result {
 /// Sin esto el `.so` sale VACIO. Ver el comentario del modulo: un `cdylib` sin
 /// `#[no_mangle]` se queda sin codigo porque el enlazador tira lo que no sea
 /// alcanzable desde las exportaciones.
+// MEDIDO: `#[unsafe(no_mangle)]` y no `#[no_mangle]`. En Rust moderno `no_mangle`
+// es un atributo `unsafe`, y el workspace prohibe `unsafe_code`. El ejemplo oficial
+// de egui desactiva los lints del workspace por el mismo motivo; este crate hace
+// lo mismo, y es el unico sitio del proyecto donde hace falta `unsafe`.
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidApp) {
     // Al log de Android. Sin esto, `log::info!` del motor no aparece en el logcat y
     // no hay ni un solo dato de lo que hace la libreria en el movil.
