@@ -194,19 +194,48 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let mut b = Buttons::default();
     window(ctx, KIND, 0, |ui| {
+        // MEASURED: the dialog used to be sized from fixed numbers — `640` for the
+        // presets column plus `DETAILS` wide, and `HEIGHT` tall — without ever
+        // looking at the screen. On a phone that does not fit in either
+        // orientation, and it was clipped on every side.
+        //
+        // MEASURED on a moto g56 5G (2400x1080, density 390, so egui gets 2.4375
+        // points per physical pixel):
+        //
+        //   |                   | wants | portrait | landscape |
+        //   |-------------------|-------|----------|-----------|
+        //   | width  (640+292)  |  932  |  443  no | 985  yes  |
+        //   | height (HEIGHT)   |  600  |  985  yes | 443  no   |
+        //
+        // So portrait overflowed sideways and landscape overflowed vertically, and
+        // because the details column had no `ScrollArea` (unlike the presets one,
+        // which does) the clipped content was unreachable, not merely hidden.
+        //
+        // Now both columns share whatever the content rect actually leaves, and
+        // details scrolls too. On a desktop-sized window nothing changes: the
+        // numbers above all fit, so the clamps never engage.
+        let avail = ctx.content_rect();
+        let avail_w = (avail.width() - 16.0).max(1.0);
+        let height = (avail.height() - 16.0).min(HEIGHT);
+        let details_w = DETAILS.min(avail_w * 0.5);
+        let presets_w = (avail_w - details_w).min(640.0);
         ui.horizontal_top(|ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 22, right: 14, top: 14, bottom: 18 }).show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(640.0);
-                    ui.set_min_height(HEIGHT - 32.0);
-                    presets(app, ui, &mut d);
+                    ui.set_width(presets_w);
+                    ui.set_min_height(height - 32.0);
+                    presets(app, ui, &mut d, height);
                 });
             });
             egui::Frame::NONE.fill(t.panel_darker).inner_margin(egui::Margin::same(18)).show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(DETAILS);
-                    ui.set_min_height(HEIGHT);
-                    details(app, ui, &mut d, &mut b);
+                    ui.set_width(details_w);
+                    ui.set_min_height(height);
+                    egui::ScrollArea::vertical()
+                        .id_salt("newdoc-details")
+                        .max_height((height - 36.0).max(0.0))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| details(app, ui, &mut d, &mut b));
                 });
             });
         });
@@ -215,7 +244,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 /// The category tabs and the chosen category's preset cards.
-fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
+fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, height: f32) {
     let t = Tokens::get(ui.ctx());
     let names: Vec<&str> = newdoc::category_names().collect();
     let cat = names.iter().position(|n| n.eq_ignore_ascii_case(&d.str("category"))).unwrap_or(0);
@@ -238,7 +267,10 @@ fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
         ui.label(egui::RichText::new(hint).color(t.text_dim));
         return;
     }
-    egui::ScrollArea::vertical().id_salt(("newdoc-presets", cat)).max_height(HEIGHT - 110.0).auto_shrink([false, false]).show(ui, |ui| {
+    // MEASURED: was `HEIGHT - 110.0`, a fixed number. On a short window that goes
+    // negative and the list has nowhere to scroll.
+    let list_h = (height - 110.0).max(0.0);
+    egui::ScrollArea::vertical().id_salt(("newdoc-presets", cat)).max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
             let (w, h, preset) = (d.f64("width", 0.0), d.f64("height", 0.0), d.str("preset"));

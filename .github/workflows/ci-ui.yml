@@ -1,0 +1,62 @@
+name: tests de la UI
+
+# MEDIDO por que este workflow existe: el fork solo tenia los dos workflows de
+# Android, que **no compilan para el host y no corren un solo test**. Eso deja un
+# agujero real: cualquier cambio en `crates/ui-egui/` —50k lineas, incluidos los
+# dialogos— se sube sin que nada lo mire.
+#
+# El primerhole que ha encontrado: el fix de `dialogs/new_document.rs` para que el
+# dialogo quepa en una pantalla de movil se subio sin verificar nada.
+#
+# Este workflow es rapido a proposito —compila para el host, sin NDK— para poder
+# Catchar un fallo en minutos y no en el cuarto de hora que tarda `build-android-so`.
+
+on:
+  push:
+    paths:
+      - "crates/ui-egui/**"
+      - "crates/engine/**"
+      - "crates/doc/**"
+      - "crates/theme/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-ui.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui:
+    name: tests de vectorcraft-ui-egui
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust estable
+        # MEDIDO: `Cargo.toml` pide `rust-version = "1.95"`. Sin esto el runner usa
+        # la que trae, que se queda corta y el fallo sale como un error de
+        # compilacion de un crate que no tiene nada que ver.
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # MEDIDO: los golden tests de la UI son los que comparan pixeles de
+      # documentos construidos en codigo (`assert_rgb`). Son la unica red que hay
+      # para los cambios de layout, y corren sin GPU ni movil.
+      - name: tests de la UI
+        run: cargo test -p vectorcraft-ui-egui
+
+      # El motor tambien, porque un cambio de layout suele ir con uno de estado y
+      # `cargo xtask layers` comprueba que nada por debajo de L6 ha tocado egui.
+      - name: tests del motor
+        run: cargo test -p vectorcraft-engine
+
+      - name: capas
+        # MEDIDO: sale como `Layer violation: ...` si un crate de abajo importa
+        # egui. El port no lo hamovido, pero el fix del dialogo no puede
+        # introducirlo tampoco.
+        run: cargo xtask layers
