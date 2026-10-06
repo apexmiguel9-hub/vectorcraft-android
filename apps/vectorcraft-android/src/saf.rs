@@ -288,12 +288,25 @@ where
 /// `jobject`, asi que el puntero pasa tal cual.
 fn texto(e: &mut Env<'_>, v: jni::JValueOwned<'_>) -> std::result::Result<String, jni::errors::Error> {
     match v {
-        jni::JValueOwned::Object(o) => {
+        jni::JValueOwned::Object(o) if !o.is_null() => {
             // SAFETY: la referencia la ha devuelto JNI en la llamada anterior de este
             // mismo `Env`, es una local viva y no sale de aqui: se lee y se descarta.
             let s: JString = unsafe { JString::from_raw(e, o.into_raw()) };
             s.try_to_string(e)
         }
+        // MEDIDO, y era el ultimo fallo que quedaba. Un `null` de Java **no es una
+        // cadena vacia**, y envolverlo en `JString` lo convierte en un puntero nulo:
+        //
+        //     saf: abrir fallo: NullPtr("get_string_utf_chars obj argument")
+        //
+        // `MainActivity.request` devuelve `null` **cuando ha ido bien** —el error va en
+        // el valor, no en una excepcion— y `takeResult` devuelve `null` cuando el
+        // usuario cancela. Los dos son el caso normal.
+        //
+        // Lo incomodo: el selector **si** arranco y **si** devolvio el fichero
+        // (`VectorCraft: selector: content://com.android.providers.media.documents/…`),
+        // y Rust se habia rendido 0 ms antes de esperar. O sea: la app decia "cancelled"
+        // con el fichero ya elegido.
         _ => Ok(String::new()),
     }
 }
