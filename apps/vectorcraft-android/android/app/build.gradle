@@ -83,16 +83,16 @@ dependencies {
     // hereda de `android.app.NativeActivity`, que ya esta en el sistema operativo, y
     // el punto de entrada `android_main` lo busca winit a traves del `.so`.
     //
-    # NO anadir `androidx.games:games-activity` todavia. Es lo que arregla el teclado
-    # (trae `GameTextInput`), pero anade una dependencia que hay que resolver y una
+    // NO anadir `androidx.games:games-activity` todavia. Es lo que arregla el teclado
+    // (trae `GameTextInput`), pero anade una dependencia que hay que resolver y una
     // clase Java que compilar. Primero que abra.
     //
-    # Cuando se quiera el teclado, la documentacion da la version exacta:
-    #
-    #     Add gradle dependency: androidx.games:games-activity:4.4.0
-    #     + la feature `game-activity` en el Cargo.toml
-    #     + MainActivity pasa a heredar de GameActivity
-    #
+    // Cuando se quiera el teclado, la documentacion da la version exacta:
+    //
+    //     Add gradle dependency: androidx.games:games-activity:4.4.0
+    //     + la feature `game-activity` en el Cargo.toml
+    //     + MainActivity pasa a heredar de GameActivity
+    //
     implementation 'androidx.annotation:annotation:1.7.1'
 }
 
