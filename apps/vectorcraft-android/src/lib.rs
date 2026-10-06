@@ -138,6 +138,36 @@ pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidA
     // no hay ni un solo dato de lo que hace la libreria en el movil.
     android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info));
 
+    // MEDIDO que hace falta, y el motivo es concreto.
+    //
+    // `log` **descarta todo en silencio hasta que se llama a `set_max_level`**: su
+    // `MAX_LOG_LEVEL_FILTER` empieza en `LevelFilter::Off`. Sin esto, ni un solo
+    // `log::info!` de esta libreria ni del motor llega al logcat.
+    //
+    // Se ha comprobado que `android_logger` 0.14.1 lo hace, pero solo en una
+    // condicion muy estrecha:
+    //
+    //     pub fn init_once(config: Config) {
+    //         let log_level = config.log_level;
+    //         let logger = ANDROID_LOGGER.get_or_init(|| AndroidLogger::new(config));
+    //         if let Err(err) = log::set_logger(logger) {
+    //             log::debug!("...set_logger failed: {err}");
+    //         } else if let Some(level) = log_level {
+    //             log::set_max_level(level);      // <- solo si no hay logger puesto
+    //         }
+    //     }
+    //
+    // Es decir: **si ya hay un logger instalado, `set_max_level` no se llama nunca**
+    // y el nivel se queda en `Off` para siempre. Depender de esa rama para tener
+    // logs es depender de que nadie haya puesto un logger antes, que no es una
+    // garantia: el orden de inicializacion dentro de un grafo de 393 crates no lo
+    // tiene uno.
+    //
+    // Ponerlo aqui lo hace explicito y no condicional. Y el `log::info!` siguiente
+    // imprime el nivel resuelto, que es la medicion que faltaba.
+    log::set_max_level(log::LevelFilter::Info);
+    log::info!("nivel de log resuelto: {}", log::max_level());
+
     // MEDIDO que hace falta, y de paso una leccion del otro repo: **en Android, un
     // panic de Rust es invisible.** El gancho por defecto escribe en `stderr`, y
     // `stderr` no llega a logcat si el proceso no tiene stdout asociado. Ya se ha

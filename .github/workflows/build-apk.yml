@@ -154,6 +154,29 @@ jobs:
           }
           echo "OK: la libreria esta dentro con el nombre y la arquitectura correctos"
 
+          # MEDIDO que hace falta este paso. AGP vuelve a est ripear las librerias
+          # nativas al empaquetarlas, y lo hace quitando tambien `.symtab`. Medido
+          # comparando tamanos: 79 MB la deja `build-android-so`, 55,8 MB la del APK.
+          #
+          # Sin `.symtab` el tombstone solo puede nombrar lo que hay en `.dynsym`, y de
+          # un `cdylib` de Rust eso son DOS simbolos (`android_main` y
+          # `ANativeActivity_onCreate`). El resto del backtrace son direcciones
+          # crudas, y un crash se queda en:
+          #
+          #     Fatal signal 6 (SIGABRT) ... in tid ... (android_main+428)
+          #
+          # Se sabe que hay panic y no donde. Asi que se comprueba que la tabla de
+          # simbolos sobrevive al empaquetado, que es lo que la hace legible.
+          unzip -p "$APK" lib/arm64-v8a/libvectorcraft_android.so > /tmp/so.apk.so
+          READELF=$(ls "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/llvm-readelf 2>/dev/null | head -1)
+          "$READELF" -S /tmp/so.apk.so | grep -q '\.symtab' || {
+            echo "::error::la .so del APK no tiene .symtab: los backtrace seran ilegibles"
+            echo "::error::AGP la ha vuelto a est ripear. Falta:"
+            echo "::error::  packaging { jniLibs { keepDebugSymbols '**/*.so' } }"
+            exit 1
+          }
+          echo "OK: la .so del APK conserva .symtab, los backtrace tendran nombres"
+
       - name: Comprobar que el APK se puede instalar
         # Un APK que `aapt` no lee es un APK que Android no instala. Se mira antes de
         # subirlo, no en el movil.

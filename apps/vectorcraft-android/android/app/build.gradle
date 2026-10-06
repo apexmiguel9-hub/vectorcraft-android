@@ -31,6 +31,30 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging false
+
+            // MEDIDO que hace falta, y es la razon de que se llegue a tener que
+            // mirar el ensamblador a mano.
+            //
+            // AGP **vuelve a est ripear las librerias nativas al empaquetarlas**,
+            // y lo hace con `strip` a secas, que ademas de quitar `.debug_*` quita
+            // `.symtab` y `.strtab`. Medido comparando tamanos: el paso de
+            // `build-android-so` deja la `.so` en 79 MB, y la que va dentro del APK
+            // pesa 55,8 MB.
+            //
+            // Con `.symtab` fuera, el tombstone solo nombra los simbolos que estan en
+            // `.dynsym`, y de un `cdylib` de Rust eso son **dos**: `android_main` y
+            // `ANativeActivity_onCreate`. El resto del backtrace son direcciones
+            // crudas:
+            //
+            //     #07 pc 0000000001542480   base.apk (offset 0xb0000)
+            //
+            // Se puede saber que se ha panicado y nada mas. Sin esto, el unico modo
+            // de averiguar donde falla es desensamblar a mano, que es como se
+            // averiguo que el crash estaba en `eframe::run_native`.
+            //
+            // Esto es un build `debug`, asi que los simbolos se quedan. En un
+            // `release` habria que quitarlo.
+            keepDebugSymbols '**/*.so'
         }
     }
 
