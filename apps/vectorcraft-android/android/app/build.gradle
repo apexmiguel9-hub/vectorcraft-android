@@ -54,7 +54,16 @@ android {
             //
             // Esto es un build `debug`, asi que los simbolos se quedan. En un
             // `release` habria que quitarlo.
-            keepDebugSymbols '**/*.so'
+            //
+            // MEDIDO: es `+=` y no una llamada. Con `keepDebugSymbols '**/*.so'`:
+            //
+            //     Could not find method keepDebugSymbols() for arguments [**/*.so]
+            //     on object of type ...JniLibsPackagingImpl$AgpDecorated
+            //
+            // Es un `MutableSet`, no un metodo. El error lo dice casi todo:
+            // "method ... for arguments", cuando lo que hay delante es una
+            // propiedad. El sintoma parece de API inexistente y la API esta.
+            keepDebugSymbols += ['**/*.so']
         }
     }
 
