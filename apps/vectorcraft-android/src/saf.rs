@@ -140,36 +140,35 @@ where
     con_env(f)?
 }
 
-/// Un `JObject` devuelto por una llamada Java, convertido al tipo que hizo falta.
-///
-/// MEDIDO: **no existe `From<JObject> for JString`** en `jni` 0.22, asi que
-/// `o.into()` no compila:
-///
-///     the trait bound `JString<'_>: From<JObject<'_>>` is not satisfied
-///
-/// El camino que ofrece el crate es `Reference::from_raw`, que es `unsafe`. Aqui es
-/// legitimo: el objeto lo ha devuelto JNI en esta misma llamada, es una referencia
-/// local viva y no se guarda mas alla del `Env`.
-fn como<T: jni::objects::Reference>(e: &Env<'_>, o: JObject<'_>) -> T {
-    let crudo = o.into_raw();
-    // SAFETY: ver arriba: la referencia viene de la llamada JNI que la acaba de crear.
-    unsafe { T::from_raw(e, crudo) }
-}
-
 /// El `String` que devuelve una llamada Java, o cadena vacia si devuelve `null`.
 ///
-/// MEDIDO que no se usa `Env::get_string` porque en `jni` 0.22 esta **deprecado**:
+/// MEDIDO, tres cosas encadenadas, todas mirando el codigo de `jni` 0.22:
 ///
-///     #[deprecated(since = "0.22.0",
-///        note = "use JString::mutf8_chars or JString::to_string instead")]
-///     pub fn get_string…(…)
+/// 1. **No existe `From<JObject> for JString`**, asi que `o.into()` no compila:
+///    `the trait bound JString<'_>: From<JObject<'_>> is not satisfied`. Y tampoco
+///    vale un `T: Reference` generico con `T::from_raw`: `Reference` **no** tiene
+///    ese metodo —el ejemplo de `reference.rs:118` es de como escribir uno propio,
+///    no del trait—, asi que sale `no associated function named from_raw found for
+///    type parameter T`.
+/// 2. El metodo que si existe es **`JString::from_raw`** (el propio crate lo usa en
+///    `jstring.rs:165`), y `reference.rs:362` lo recomienda explicitamente: *"You
+///    should always prefer to use wrapper-provided ::from_raw() methods (Such as
+///    JString::from_raw()) for wrapping raw local references because those will
+///    guarantee that the returned reference has a lifetime that's tied to a valid
+///    local reference frame."*
+/// 3. **`Env::get_string` esta deprecado** desde 0.22 (*"use JString::mutf8_chars or
+///    JString::to_string instead"*), y el workspace compila con
+///    `clippy -D warnings`: aunque el tipo cuadrara seria fallo de compilacion. El
+///    sustituto es `JString::try_to_string`.
 ///
-/// Y el workspace compila con `clippy -D warnings`, asi que deprecado es fallo de
-/// compilacion aunque el tipo cuadre. `try_to_string` es el sustituto.
+/// `jobject` y `jstring` son el mismo tipo: en JNI `jstring` es un `typedef` de
+/// `jobject`, asi que el puntero pasa tal cual.
 fn texto(e: &mut Env<'_>, v: jni::JValueOwned<'_>) -> std::result::Result<String, jni::errors::Error> {
     match v {
         jni::JValueOwned::Object(o) => {
-            let s: JString = como(e, o);
+            // SAFETY: la referencia la ha devuelto JNI en la llamada anterior de este
+            // mismo `Env`, es una local viva y no sale de aqui: se lee y se descarta.
+            let s: JString = unsafe { JString::from_raw(e, o.into_raw()) };
             s.try_to_string(e)
         }
         _ => Ok(String::new()),
@@ -410,8 +409,13 @@ pub fn es_uri(path: &str) -> bool {
 ///   que devuelve un error claro en vez de fingir.
 pub fn services() -> Services {
     Services {
-        pick_open: Some(Box::new(|pick: &FilePick| pedir(MODO_ABRIR, "Abrir", &mimes(&pick.filters)))),
-        pick_save: Some(Box::new(|pick: &FilePick| pedir(MODO_GUARDAR, &pick.name, &mimes(&pick.filters)))),
+        // MEDIDO: `PickOpen` y `PickSave` devuelven **`Option<String>`**
+        // (`lib.rs:132,133`), no `Result`. Por eso el `.ok().flatten()`: `pedir`
+        // devuelve `Result<Option<String>, String>` porque necesita poder fallar, y un
+        // fallo de SAF se trata como "el usuario no eligio nada", que es lo que un
+        // `Option` significa aqui.
+        pick_open: Some(Box::new(|pick: &FilePick| pedir(MODO_ABRIR, "Abrir", &mimes(&pick.filters)).ok().flatten())),
+        pick_save: Some(Box::new(|pick: &FilePick| pedir(MODO_GUARDAR, &pick.name, &mimes(&pick.filters)).ok().flatten())),
         pick_open_multi: Some(Box::new(|| {
             let uris = match pedir(MODO_ABRIR_MULTI, "Abrir", "") {
                 Ok(u) => u,
@@ -426,7 +430,8 @@ pub fn services() -> Services {
             uris.map(|s| s.split('\n').filter(|u| !u.is_empty()).map(str::to_string).collect())
                 .unwrap_or_default()
         })),
-        pick_folder: Some(Box::new(|| pedir(MODO_CARPETA, "Elegir carpeta", ""))),
+        // MEDIDO: `pick_folder` es `Box<dyn FnMut() -> Option<String>>` (`lib.rs:185`).
+        pick_folder: Some(Box::new(|| pedir(MODO_CARPETA, "Elegir carpeta", "").ok().flatten())),
         read: Some(Box::new(|path: &str| {
             if es_uri(path) {
                 leer(path)
