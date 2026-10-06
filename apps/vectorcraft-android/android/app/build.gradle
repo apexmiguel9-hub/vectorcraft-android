@@ -88,7 +88,7 @@ tasks.register('cargoBuild', Exec) {
     def target = System.getenv('CARGO_BUILD_TARGET') ?: 'aarch64-linux-android'
     def profile = System.getenv('CARGO_PROFILE') ?: 'debug'
 
-    // `cargo ndk` habla de triples de Rust; Gradle habla de ABI de Android. La
+    // `cargo ndk` habla de triples de Rust; Gradle y `jniLibs` hablan de ABI. La
     // correspondencia es aarch64-linux-android <-> arm64-v8a, y es donde se cuelan
     // los fallos: si no coinciden, el .so acaba en una carpeta que Android no mira y
     // el APK sale sin él, en silencio.
@@ -98,9 +98,17 @@ tasks.register('cargoBuild', Exec) {
         'x86_64-linux-android': 'x86_64',
     ]
 
+    // MEDIDO: `cargo ndk` 3.x toma el NOMBRE DE ABI en `-t`, no el triple de Rust.
+    // El prefijo `androidTargetTriplet=` es de 2.x y en 3.x falla con:
+    //   invalid value 'androidTargetTriplet=aarch64-linux-android'
+    def abi = ndkAbis.get(target)
+    if (abi == null) {
+        throw new GradleException("triple de Rust sin ABI conocida: ${target}. Anadela al mapa ndkAbis.")
+    }
+
     def args = [
         'ndk',
-        '-t', "androidTargetTriplet=$target",
+        '-t', abi,
         '-o', targetDir,
         'build', '-p', 'vectorcraft-android', target,
     ]

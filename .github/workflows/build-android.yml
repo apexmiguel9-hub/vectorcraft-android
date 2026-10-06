@@ -28,6 +28,8 @@ env:
   # y lo que等同 `arm64-v8a` de Gradle. Si alguno no cuadra, el APK se empaqueta y
   # luego Android lo ignora en silencio: por eso el paso de verificar.
   ANDROID_TARGET: aarch64-linux-android
+  # El nombre de ABI que usa `jniLibs`. `cargo ndk` mapea este al triple de Rust.
+  ANDROID_ABI: arm64-v8a
 
 jobs:
   build:
@@ -134,12 +136,16 @@ jobs:
         # panic de Rust aborta sin backtrace: en el logcat solo sale "Fatal signal
         # 6" y no hay ni una linea de donde fallo. Es el peor fallo posible porque
         # parece un fallo de la app y es un fallo del empaquetado.
+        # MEDIDO: `-t` toma el NOMBRE DE ABI (`arm64-v8a`), no el triple de Rust ni
+        # `androidTargetTriplet=...`. Ese prefijo era de cargo-ndk 2.x y en 3.x sale:
+        #   error: invalid value 'androidTargetTriplet=aarch64-linux-android'
+        #          for '--target <TARGET>'
         run: |
           cargo ndk \
-            -t androidTargetTriplet=$ANDROID_TARGET \
+            -t $ANDROID_ABI \
             -o ./target \
             strip \
-            build -p vectorcraft-android $ANDROID_TARGET --locked
+            build -p vectorcraft-android --locked
           echo "--- .so producido ---"
           ls -la target/$ANDROID_TARGET/debug/libvectorcraft_android.so
           file target/$ANDROID_TARGET/debug/libvectorcraft_android.so
