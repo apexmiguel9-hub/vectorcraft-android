@@ -169,6 +169,34 @@ jobs:
           }
           echo "OK: el APK es valido"
 
+      - name: Comprobar que el APK lleva la clase del Activity
+        # MEDIDO que hace falta este paso, y es el que mas caro salio.
+        #
+        #   java.lang.ClassNotFoundException: Didn't find class
+        #   "ai.storyteller.vectorcraft.MainActivity"
+        #
+        # El APK salia de 56 MB, bien formado, con la libreria nativa dentro y
+        # `aapt` leyendolo sin quejarse. Y no tenia la clase.
+        #
+        # Nada de lo anterior lo detecta. **Gradle construye igual de bien cuando
+        # ignora un fichero**: sin el plugin de Kotlin, un `.kt` se salta sin avisar.
+        # El APK parece bueno y solo falla al lanzarlo en el movil. Asi que se
+        # comprueba aqui, que es donde sale.
+        run: |
+          APK=apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk
+          PATRON="ai/storyteller/vectorcraft/MainActivity"
+
+          unzip -p "$APK" classes.dex classes2.dex > /tmp/todos.dex
+          if grep -aq "$PATRON" /tmp/todos.dex; then
+            echo "OK: la clase esta en el APK"
+          else
+            echo "::error::el APK NO lleva la clase ai.storyteller.vectorcraft.MainActivity"
+            echo "::error::Si el Activity esta en Kotlin falta el plugin de Kotlin:"
+            echo "::error::    apply plugin: 'org.jetbrains.kotlin.android'"
+            echo "::error::Gradle ignora los .kt en silencio si no lo tiene, y el APK sale bien."
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: vectorcraft-android-debug
