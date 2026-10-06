@@ -18,6 +18,11 @@ on:
       - "crates/engine/**"
       - "crates/doc/**"
       - "crates/theme/**"
+      # MEDIDO: faltaba `xtask`, y se noto enseguida. El primer commit que cambio
+      # solo `xtask/src/layers.rs` —registrar este crate en la tabla de capas— no
+      # disparo el workflow, porque la regla no estaba en el filtro de `paths`. Un
+      # filtro mal hecho esconde justo los cambios que vienen a arreglar el filtro.
+      - "xtask/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/ci-ui.yml"
