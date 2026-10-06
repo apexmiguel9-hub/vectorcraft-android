@@ -64,6 +64,17 @@ const COLOR_MODES: [(&str, &str); 2] = [("rgb", "RGB Color"), ("cmyk", "CMYK Col
 const DETAILS: f32 = 292.0;
 /// Height of the dialog's content.
 const HEIGHT: f32 = 600.0;
+/// MEASURED: horizontal inner margins of the two columns, as they appear in `show`.
+/// The Presets frame is `Margin { left: 22, right: 14, .. }` and the Details one is
+/// `Margin::same(18)`, so 36 + 36. The first attempt at making this dialog fit a
+/// small window left these out of the arithmetic and overflowed the screen by
+/// exactly 19pt on a 985pt-wide one — see the note in `show`.
+const PRESETS_MARGIN_X: f32 = 22.0 + 14.0;
+const DETAILS_MARGIN_X: f32 = 18.0 + 18.0;
+/// Width of the Presets column.
+const PRESETS: f32 = 640.0;
+/// Floor for the dialog height, so a very short window still shows something.
+const MIN_HEIGHT: f32 = 200.0;
 
 /// Open New Document on the most recent settings (or Letter), named after the next untitled
 /// document.
@@ -157,7 +168,7 @@ fn window(ctx: &egui::Context, id: &str, margin: i8, add: impl FnOnce(&mut egui:
     egui::Area::new(egui::Id::new("modal-dim")).order(egui::Order::Middle).fixed_pos(egui::pos2(0.0, 0.0)).show(ctx, |ui| {
         ui.allocate_rect(ctx.content_rect(), egui::Sense::click());
     });
-    egui::Window::new(id)
+    let resp = egui::Window::new(id)
         .id(egui::Id::new(("dialog", id)))
         .order(egui::Order::Foreground)
         .collapsible(false)
@@ -166,6 +177,18 @@ fn window(ctx: &egui::Context, id: &str, margin: i8, add: impl FnOnce(&mut egui:
         .anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0])
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(margin)))
         .show(ctx, add);
+    // MEASURED, and it is here because the first attempt at fitting this dialog to
+    // the screen was wrong and the only reason to know it is wrong is the number.
+    // `log::info!` rather than a comment: two of the three sizes involved
+    // (`content_rect`, and whatever the frame/margin rules end up adding on top)
+    // are not knowable without asking egui at runtime, and guessing them is what
+    // produced the 19pt overflow in the first place.
+    if let Some(r) = resp {
+        log::info!(
+            "dialog {id}: pantalla {:?}, hueco {:?}, ventana {:?}",
+            ctx.screen_rect(), ctx.content_rect(), r.response.rect
+        );
+    }
 }
 
 /// What the buttons of a window asked for.
@@ -214,11 +237,27 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         // Now both columns share whatever the content rect actually leaves, and
         // details scrolls too. On a desktop-sized window nothing changes: the
         // numbers above all fit, so the clamps never engage.
+        // MEASURED: the first version of this clamped `avail_w = avail.width() - 16`
+        // and split *that* between the two columns. It did not work, and the reason
+        // is that the two columns' `inner_margin`s sit on top of the widths set with
+        // `set_width`, they are not inside them. The dialog therefore wanted
+        //
+        //     22 + 640 + 14 + 18 + 292 + 18  =  1004pt
+        //
+        // against a landscape viewport of 985pt — 19pt too wide, clipped on both
+        // sides, which is what the phone screenshot showed.
+        //
+        // So the margins come off first, then the rest is what the columns share.
+        // The outer frame's own margin is 0 (`window(ctx, KIND, 0, ..)`).
         let avail = ctx.content_rect();
-        let avail_w = (avail.width() - 16.0).max(1.0);
-        let height = (avail.height() - 16.0).min(HEIGHT);
-        let details_w = DETAILS.min(avail_w * 0.5);
-        let presets_w = (avail_w - details_w).min(640.0);
+        // A 94% of the room, so the dialog never touches the edges: the point of
+        // this is for it to look *placed*, not merely not-clipped.
+        let avail_w = ((avail.width() - PRESETS_MARGIN_X - DETAILS_MARGIN_X) * 0.94).max(1.0);
+        let height = ((avail.height() - 16.0) * 0.98).min(HEIGHT).max(MIN_HEIGHT);
+        // Details never takes more than 45%, so on a narrow screen both columns stay
+        // usable instead of Details eating everything.
+        let details_w = DETAILS.min(avail_w * 0.45);
+        let presets_w = (avail_w - details_w).min(PRESETS);
         ui.horizontal_top(|ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 22, right: 14, top: 14, bottom: 18 }).show(ui, |ui| {
                 ui.vertical(|ui| {
