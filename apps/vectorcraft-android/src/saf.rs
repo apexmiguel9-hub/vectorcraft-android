@@ -309,11 +309,17 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
         Ok(Ok(texto(e, v)?))
     })?;
 
-    // MEDIDO: el `?` no es opcional. `env` devuelve
-    // `Result<Option<String>, String>` —porque `excepcion` devuelve `Option`— y sin
-    // aplanarlo, `if let Some(..)` se esta aplicando a un `Result` y el error es
-    // `expected Result<_, String>, found Option<String>`, que no señala el sitio.
-    if let Some(x) = env(|e| Ok(excepcion(e)))? {
+    // MEDIDO, y son dos Details en uno:
+    //
+    // * El `Ok` de dentro es porque `env` pide
+    //   `Fn(&mut Env) -> Result<Result<T, String>, jni::errors::Error>`: el
+    //   `Result` de fuera es el error de JNI y el de dentro es el de la aplicacion.
+    //   Sin el segundo, el error sale `expected Result<_, String>, found
+    //   Option<String>` señalando la llamada a `excepcion`, que es inocente.
+    // * El `?` de fuera es porque `excepcion` devuelve `Option<String>` —"no hay
+    //   excepcion" es el caso normal—, asi que hay que aplanar antes del
+    //   `if let`.
+    if let Some(x) = env(|e| Ok(Ok(excepcion(e))))? {
         return Err(x);
     }
     let bytes = vectorcraft_format::base64_decode(&b64).ok_or("el contenido leido no es base64 valido")?;
@@ -344,7 +350,7 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
     // `Result<Option<String>, String>` —porque `excepcion` devuelve `Option`— y sin
     // aplanarlo, `if let Some(..)` se esta aplicando a un `Result` y el error es
     // `expected Result<_, String>, found Option<String>`, que no señala el sitio.
-    if let Some(x) = env(|e| Ok(excepcion(e)))? {
+    if let Some(x) = env(|e| Ok(Ok(excepcion(e))))? {
         return Err(x);
     }
     log::info!("saf: escritos {} bytes en {uri} en {:?}", bytes.len(), t0.elapsed());
