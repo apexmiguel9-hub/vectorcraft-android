@@ -88,9 +88,13 @@ static VM: AtomicPtr<JavaVM> = AtomicPtr::new(std::ptr::null_mut());
 
 /// La clase de Java, tal y como la pasa `MainActivity.onCreate`.
 ///
-/// MEDIDO por que hace falta, y es la quinta via probada: ver [`clase`]. Se guarda la
-/// referencia **global** de JNI de la clase, que vive para siempre, asi que el `Global`
-/// se filtra a proposito y aqui solo queda su puntero.
+/// MEDIDO por que hace falta, y es la quinta via probada: ver [`clase`].
+///
+/// Es el puntero de una referencia **global** de JNI creada en `nativeListo`. Ojo:
+/// un puntero no es una referencia, y por eso el `Global` se filtra con
+/// `mem::forget` — sin eso la referencia se borra y lo que queda aqui es un puntero
+/// a memoria liberada. Lo dice el `abort` de Android, textual:
+/// `jobject is an invalid global reference … deleted reference`.
 static CLASE_JAVA: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// `true` cuando Java ya llamo a `nativeOnFilePicked` y el resultado esta listo.
@@ -139,23 +143,29 @@ pub extern "system" fn Java_ai_storyteller_vectorcraft_MainActivity_nativeListo<
         .with_env(|e| -> jni::errors::Result<()> {
             let g = e.new_global_ref(&clase)?;
             CLASE_JAVA.store(g.as_raw() as *mut c_void, Ordering::Release);
+            // MEDIDO, y era este el fallo entero. Sin esto, `g` se destruye al salir
+            // del bloque, `Global::drop` llama a `DeleteGlobalRef`, y lo que queda
+            // guardado es un puntero a una referencia **borrada**. La app lo detecta
+            // uno o dos toques despues, en la primera llamada JNI que la toca:
+            //
+            //     JNI DETECTED ERROR IN APPLICATION: JNI ERROR (app bug): jobject is
+            //     an invalid global reference: 0x36ca (deleted reference at index 438
+            //     in a table of size 438)
+            //         in call to IsInstanceOf
+            //
+            // O sea: elstore si se ve, el log de "clase recibida: true" tambien, y
+            // solo peta cuando se usa. Lo de "se filtra a proposito" estaba escrito en
+            // el comentario del campo y **no estaba hecho**: guardar `as_raw()` copia
+            // el puntero, no la referencia.
+            //
+            // La clase vive para todo el proceso, asi que filtrarla es lo correcto.
+            std::mem::forget(g);
             Ok(())
         })
         .resolve_with::<jni::errors::LogContextErrorAndDefault, _>(|| {
             "saf: MainActivity no pudo pasar su clase a Rust".to_string()
         });
     log::info!("saf: clase de Java recibida: {}", CLASE_JAVA.load(Ordering::Acquire) != std::ptr::null_mut());
-}
-
-/// MEDIDO: comparativa. `nativeListo` es `extern "system"` con tipos; esta es
-/// `extern "C"` con punteros, como `nativeOnFilePicked`. Si una resuelve y la otra no,
-/// el problema es la firma y no las nativas de esta clase en general.
-#[unsafe(no_mangle)]
-pub extern "C" fn Java_ai_storyteller_vectorcraft_MainActivity_nativaDeEstiloViejo(
-    env: *mut c_void,
-    clase: *mut c_void,
-) {
-    log::info!("saf: nativaDeEstiloViejo llamada, env={} clase={}", env != std::ptr::null_mut(), clase != std::ptr::null_mut());
 }
 
 /// Java -> Rust: el selector ha terminado.

@@ -137,13 +137,6 @@ public class MainActivity extends NativeActivity {
      */
     private static native void nativeListo();
 
-    /**
-     * MEDIDO: una segunda nativa, con el estilo viejo (`extern "C"` y punteros crudos,
-     * como `nativeOnFilePicked`), para separar "las nativas de esta clase no resuelven"
-     * de "esta en concreto no resuelve".
-     */
-    private static native void nativaDeEstiloViejo();
-
     /** Guarda el resultado y despierta a Rust, que esta esperando. */
     private static void publicar(String uri) {
         lastResult = uri;
@@ -442,7 +435,7 @@ public class MainActivity extends NativeActivity {
         // O sea: simbolo ahi, libreria cargada, y `dlsym` devuelve null. Y MEDIDO que
         // no es la firma: **dos** nativas distintas fallan igual —una `extern "C"` con
         // punteros y otra `extern "system"` con tipos— y desde dos sitios distintos de
-        // su ciclo de vida, `onCreate` y `onWindowFocusChanged`.
+        // su ciclo de vida.
         //
         // La razon es que `android.app.NativeActivity` (la de AOSP) carga la libreria por
         // su cuenta leyendo el meta-data `android.app.lib_name`, y lo hace por el camino
@@ -463,7 +456,7 @@ public class MainActivity extends NativeActivity {
         instance = this;
         // MEDIDO: esto es una PRUEBA, no el sitio final.
         //
-        // En `onCreate` falla con
+        // Fallaba con
         //
         //     java.lang.UnsatisfiedLinkError: No implementation found for void
         //     ai.storyteller.vectorcraft.MainActivity.nativeListo()
@@ -476,13 +469,14 @@ public class MainActivity extends NativeActivity {
         // **sacada del movil**). O sea: simbolo ahi, libreria cargada, y `dlsym`
         // devuelve null. Sin explicacion todavia.
         //
-        // Se intenta en los dos sitios y con `try/catch`, para (a) que la app no muera
-        // por esto, y (b) medir cual de los dos funciona:
-        //
-        // * `onCreate`, por el hilo principal de Java, lo antes posible.
-        // * `onWindowFocusChanged(true)`, cuando la ventana ya esta y la libreria
-        //   cargada de seguro.
-        probar("onCreate");
+        // MEDIDO: con `System.loadLibrary` explicito esto resuelve; sin el, ninguna
+        // nativa de la clase resolvia. Va con `try/catch` para que un fallo aqui no
+        // tumbe la app.
+        try {
+            nativeListo();
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "nativeListo: " + t);
+        }
 
         // ------------------------------------------------------------------
         // Que la ventana respete las barras del sistema.
@@ -548,30 +542,6 @@ public class MainActivity extends NativeActivity {
                     + " | density=" + d);
             return insets;
         });
-    }
-
-    /** MEDIDO: la medicion de que llamada nativa resuelve y cual no. */
-    private static void probar(String donde) {
-        try {
-            nativaDeEstiloViejo();
-            android.util.Log.i(TAG, "nativaDeEstiloViejo desde " + donde + ": RESUELTA");
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "nativaDeEstiloViejo desde " + donde + ": " + t);
-        }
-        try {
-            nativeListo();
-            android.util.Log.i(TAG, "nativeListo desde " + donde + ": RESUELTA");
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "nativeListo desde " + donde + ": " + t);
-        }
-    }
-
-    @Override
-    public void onWindowFocusChanged(boolean tieneFoco) {
-        super.onWindowFocusChanged(tieneFoco);
-        if (tieneFoco) {
-            probar("onWindowFocusChanged");
-        }
     }
 
     @Override
