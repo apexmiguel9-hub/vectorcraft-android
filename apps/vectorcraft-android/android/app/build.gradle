@@ -58,20 +58,41 @@ android {
 }
 
 dependencies {
-    // MEDIDO que hace falta: `android-game-activity`, NO `native-activity`.
+    // MEDIDO: aqui NO va ninguna dependencia de `android-activity`, y esa es la
+    // leccion de este fichero.
     //
-    // MEDIDO que hace falta `native-activity` y NO `game-activity`: es lo que usa
-    // el ejemplo oficial de egui (`eframe/examples/hello_android`), y es el unico
-    // camino con un `android_main` que se sabe que arranca.
+    // Estaba puesto `implementation 'org.mozilla:android-activity:0.6.1'` y Gradle
+    // contesta:
     //
-    // Se pierde el teclado blando: hay un reporte reproducible de winit de que con
-    // `NativeActivity` no aparece en Android moderno (Galaxy S23 / Android 16),
-    // porque el `InputMethodManager` lo hace a traves de una vista y `NativeActivity`
-    // no tiene ninguna. `GameActivity` si la trae, y con ella el teclado.
+    //     Could not resolve all files for configuration ':app:debugRuntimeClasspath'
+    //       > Could not find org.mozilla:android-activity:0.6.1
     //
-    // Se acepta a proposito: primero que abra y se vea el editor entero. Cuando se
-    // quiera arreglar son tres cambios, anotados en `apps/vectorcraft-android/src/lib.rs`.
-    implementation 'org.mozilla:android-activity:0.6.1'
+    // Ese artefacto **no existe en ningun repositorio de Maven**. Comprobado en
+    // search.maven.org, en repo1.maven.org y en el maven de Google: 404 en los tres.
+    // Pense que era la pieza Java del crate de Rust, y no lo es.
+    //
+    // La documentacion de `android-activity` lo dice sin rodeos:
+    //
+    //     NativeActivity
+    //     Setup: Just add the feature flag
+    //     "The unique advantage of the NativeActivity class is that it's shipped
+    //      as part of the Android OS and so you can use it without needing to
+    //      compile or link any Java or Kotlin code."
+    //
+    // Es decir: con `native-activity` **no hay ninguna dependencia**. `MainActivity`
+    // hereda de `android.app.NativeActivity`, que ya esta en el sistema operativo, y
+    // el punto de entrada `android_main` lo busca winit a traves del `.so`.
+    //
+    # NO anadir `androidx.games:games-activity` todavia. Es lo que arregla el teclado
+    # (trae `GameTextInput`), pero anade una dependencia que hay que resolver y una
+    // clase Java que compilar. Primero que abra.
+    //
+    # Cuando se quiera el teclado, la documentacion da la version exacta:
+    #
+    #     Add gradle dependency: androidx.games:games-activity:4.4.0
+    #     + la feature `game-activity` en el Cargo.toml
+    #     + MainActivity pasa a heredar de GameActivity
+    #
     implementation 'androidx.annotation:annotation:1.7.1'
 }
 

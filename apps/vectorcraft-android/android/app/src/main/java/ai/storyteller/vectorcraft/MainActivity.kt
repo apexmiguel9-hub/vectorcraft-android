@@ -1,7 +1,7 @@
 package ai.storyteller.vectorcraft
 
+import android.app.NativeActivity
 import android.os.Bundle
-import org.mozilla.android.activity.NativeActivity
 
 /**
  * El Activity de VectorCraft en Android.
@@ -37,12 +37,23 @@ import org.mozilla.android.activity.NativeActivity
  */
 class MainActivity : NativeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        // `GameActivity.onCreate` carga el .so declarado en el manifest
-        // (`android.app.lib_name` = `vectorcraft_android`) y le pasa el control al
-        // entry point de Rust. Si el `.so` no existe o no compila, `System.loadLibrary`
-        // lanza aquí y Android mata el proceso con `UnsatisfiedLinkError`. Es el
-        // primer sitio donde falla un APK mal empaquetado, y conviene verlo en el
-        // logcat como esto y no como un "la app no arranca".
+        // MEDIDO: esto es todo lo que hace la clase, y es a proposito.
+        //
+        // `android.app.NativeActivity` viene con el propio sistema operativo, asi
+        // que no hay ni una dependencia de Maven que resolver y ni una linea de Java
+        // que compilar. `super.onCreate` localiza el `.so` por el
+        // `android.app.lib_name` del manifiesto (`vectorcraft_android`) y winit
+        // llama a `android_main` dentro de el.
+        //
+        // El limite conocido, y esta escrito en el modulo del crate: `NativeActivity`
+        // no tiene soporte de metodos de entrada, asi que **el teclado blando no
+        // aparece** en Android moderno. Lo arregla `GameActivity` con la libreria
+        // `androidx.games:games-activity:4.4.0`. Ver el comentario del modulo.
+        //
+        // Si el `.so` no estuviera ahi, el fallo sale aqui como
+        // `UnsatisfiedLinkError`, que es el primer sitio donde se ve un APK mal
+        // empaquetado. Por eso el CI comprueba con `unzip -l` que la libreria va
+        // dentro del APK antes de darlo por bueno.
         super.onCreate(savedInstanceState)
     }
 }
