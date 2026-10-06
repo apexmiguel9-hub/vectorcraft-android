@@ -86,6 +86,12 @@ const MODO_CARPETA: jint = 3;
 /// no amplia nada.
 static VM: AtomicPtr<JavaVM> = AtomicPtr::new(std::ptr::null_mut());
 
+/// La `Activity` como referencia global de JNI, de `AndroidApp::activity_as_ptr()`.
+///
+/// MEDIDO por que hace falta: sin esto no hay forma de encontrar la clase de Java.
+/// Ver [`clase`].
+static ACTIVITY: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
 /// `true` cuando Java ya llamo a `nativeOnFilePicked` y el resultado esta listo.
 static RESUELTO: Mutex<bool> = Mutex::new(false);
 static ESPERA: Condvar = Condvar::new();
@@ -93,7 +99,10 @@ static ESPERA: Condvar = Condvar::new();
 /// Guardar el `JavaVM` del proceso. Se llama una vez, al arrancar.
 pub fn registrar(app: &winit::platform::android::activity::AndroidApp) {
     VM.store(app.vm_as_ptr() as *mut JavaVM, Ordering::Release);
-    log::info!("saf: JavaVM registrado");
+    // La Activity es una referencia **global** de JNI, valida mientras el proceso, y
+    // sirve para encontrar la clase: ver `clase`.
+    ACTIVITY.store(app.activity_as_ptr(), Ordering::Release);
+    log::info!("saf: JavaVM y Activity registrados");
 }
 
 /// Java -> Rust: el selector ha terminado.
@@ -108,6 +117,51 @@ pub extern "C" fn Java_ai_storyteller_vectorcraft_MainActivity_nativeOnFilePicke
         Err(e) => *e.into_inner() = true,
     }
     ESPERA.notify_all();
+}
+
+/// La clase Java, por el classloader de la propia Activity.
+///
+/// MEDIDO, y esto es lo que hacia que SAF no abriera nada. El primer fallo con
+/// `load_class` dio esto:
+///
+///     saf: abrir fallo: NoClassDefFound {
+///         requested: "ai/storyteller/vectorcraft/MainActivity", …
+///     }
+///
+/// La razon, segun la documentacion de `jni` 0.22 (`env.rs:688`):
+///
+///     /// …to find application classes when called from a native thread, outside of
+///     /// a native method call.
+///     /// [Env::load_class] can work on Android if a loader has been set up for the
+///     /// current thread … and if you use the `android-activity` crate this may be
+///     /// done for you.
+///
+/// Y **`android-activity` no lo deja puesto en este hilo**. Por eso `find_class` falla
+/// (no ve clases de la app desde un hilo nativo atado) y `load_class` tambien: su
+/// estrategia es "el classloader del hilo y luego `FindClass`", y aqui no hay ninguno
+/// de los dos.
+///
+/// Lo que si funciona es `LoaderContext::FromObject`, que toma el classloader **del
+/// propio objeto**. Y el Activity es un objeto de nuestra clase, que
+/// `android-activity` expone como referencia global de JNI con
+/// `AndroidApp::activity_as_ptr()`, cuya receta esta en su documentacion:
+///
+///     let raw_activity_global = app.activity_as_ptr() as jni::sys::jobject;
+///     let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity_global)? };
+///
+/// `Cast` hace `Deref` a `JObject` (`refs/cast.rs:188`), asi que se puede pasar
+/// tal cual.
+fn clase<'l>(e: &mut Env<'l>) -> std::result::Result<jni::objects::JClass<'l>, jni::errors::Error> {
+    let p = ACTIVITY.load(Ordering::Acquire);
+    if p.is_null() {
+        return Err(jni::errors::Error::NullPtr("la Activity no esta registrada"));
+    }
+    // SAFETY: `p` viene de `AndroidApp::activity_as_ptr()`, que es una referencia
+    // global de JNI propiedad de `android-activity` y valida mientras el proceso. No
+    // se libera aqui, y `as_cast_raw` hace una comprobacion en tiempo de ejecucion de
+    // que el objeto es de ese tipo.
+    let obj = unsafe { e.as_cast_raw::<jni::refs::Global<JObject>>(&p)? };
+    jni::refs::LoaderContext::FromObject(obj).load_class(e, jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"), false)
 }
 
 /// Adjuntar el hilo actual a la JVM y hacer una cosa con el `Env`.
@@ -204,7 +258,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
 
     let (titulo, mimes) = (titulo.to_string(), mimes.to_string());
     env(move |e| {
-        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = clase(e)?;
         let t = e.new_string(&titulo)?;
         let m = e.new_string(&mimes)?;
         let (jt, jm): (JObject, JObject) = (t.into(), m.into());
@@ -242,7 +296,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
 
     // Recoger el resultado. `takeResult` devuelve `null` si se cancelo.
     let uri = env(|e| {
-        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = clase(e)?;
         let v = e.call_static_method(&clase, jni::jni_str!("takeResult"), jni::jni_sig!("()Ljava/lang/String;"), &[])?;
         Ok(Ok(texto(e, v)?))
     })?;
@@ -320,7 +374,7 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
     // Sale `borrow of moved value: uri`. Una copia para el log y listo.
     let etiqueta = uri.clone();
     let b64 = env(move |e| {
-        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = clase(e)?;
         let u = e.new_string(&uri)?;
         let ju: JObject = u.into();
         let v = e.call_static_method(
@@ -357,7 +411,7 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
     let etiqueta = uri.clone();
     let b64 = vectorcraft_format::base64_encode(bytes);
     env(move |e| {
-        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = clase(e)?;
         let u = e.new_string(&uri)?;
         let d = e.new_string(&b64)?;
         let (ju, jd): (JObject, JObject) = (u.into(), d.into());
@@ -389,7 +443,7 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
 pub fn nombre(uri: &str) -> Option<String> {
     let uri = uri.to_string();
     let n = env(move |e| {
-        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = clase(e)?;
         let u = e.new_string(&uri)?;
         let ju: JObject = u.into();
         let v = e.call_static_method(
