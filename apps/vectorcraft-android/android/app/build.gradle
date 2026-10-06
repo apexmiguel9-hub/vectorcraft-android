@@ -25,11 +25,28 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
+    // MEDIDO: `useLegacyPackaging false` es lo que hace que Android descomprima la
+    // libreria al instalarla en vez de leerla del APK. Sin eso funciona igual, pero
+    // la libreria se queda sin comprimir en el disco y pesa mas.
     packaging {
         jniLibs {
             useLegacyPackaging false
         }
     }
+
+    // MEDIDO que hizo falta quitar: habia un bloque
+    //
+    //     packagingOptions { jniLibs { excludes += ['**/*.so', '!**/lib...so'] } }
+    //
+    // que **excluia la libreria del APK**. Gradle construia sin quejarse y el APK
+    // salia de 720 KB sin ninguna `.so` dentro. El sintoma es el peor posible:
+    //
+    //     el APK NO lleva lib/arm64-v8a/libvectorcraft_android.so
+    //
+    // cuando todo lo demas ha ido bien — la `.so` compila, pasa las comprobaciones
+    // de `.eh_frame` y de `.text`, y se copia a `jniLibs`. Todo correcto hasta el
+    // ultimo paso, y el fallo es una linea de configuracion que no habia motivo para
+    // existir. La negacion `!**/...` tampoco funciona como se cree en este sitio.
 
     buildTypes {
         release {
@@ -48,12 +65,6 @@ android {
             jniDebuggable true
         }
     }
-
-    packagingOptions {
-        // Los assets de VectorCraft (fuentes, pinceles, estilos) van dentro del APK.
-        jniLibs {
-            excludes += ['**/*.so', '!**/libvectorcraft_android.so']
-        }
     }
 }
 
