@@ -86,11 +86,12 @@ const MODO_CARPETA: jint = 3;
 /// no amplia nada.
 static VM: AtomicPtr<JavaVM> = AtomicPtr::new(std::ptr::null_mut());
 
-/// La `Activity` como referencia global de JNI, de `AndroidApp::activity_as_ptr()`.
+/// La clase de Java, tal y como la pasa `MainActivity.onCreate`.
 ///
-/// MEDIDO por que hace falta: sin esto no hay forma de encontrar la clase de Java.
-/// Ver [`clase`].
-static ACTIVITY: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+/// MEDIDO por que hace falta, y es la quinta via probada: ver [`clase`]. Se guarda la
+/// referencia **global** de JNI de la clase, que vive para siempre, asi que el `Global`
+/// se filtra a proposito y aqui solo queda su puntero.
+static CLASE_JAVA: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// `true` cuando Java ya llamo a `nativeOnFilePicked` y el resultado esta listo.
 static RESUELTO: Mutex<bool> = Mutex::new(false);
@@ -99,10 +100,51 @@ static ESPERA: Condvar = Condvar::new();
 /// Guardar el `JavaVM` del proceso. Se llama una vez, al arrancar.
 pub fn registrar(app: &winit::platform::android::activity::AndroidApp) {
     VM.store(app.vm_as_ptr() as *mut JavaVM, Ordering::Release);
-    // La Activity es una referencia **global** de JNI, valida mientras el proceso, y
-    // sirve para encontrar la clase: ver `clase`.
-    ACTIVITY.store(app.activity_as_ptr(), Ordering::Release);
-    log::info!("saf: JavaVM y Activity registrados");
+    let _ = app;
+    log::info!("saf: JavaVM registrado");
+}
+
+/// Java -> Rust: la app ya esta viva y nos pasa su propia clase.
+///
+/// MEDIDO, y este es el arreglo de fondo. Las cuatro vias anteriores fallaron:
+///
+/// 1. `Env::find_class` — desde un hilo nativo atado no ve clases de la app.
+/// 2. `Env::load_class` con `LoaderContext::None` — prueba el classloader del hilo y
+///    luego `FindClass`; en el hilo de `android-activity` no hay ninguno.
+/// 3. `LoaderContext::FromObject(&activity)` — deberia haber bastado, porque la Activity
+///    *es* un objeto de la clase, y seguia dando
+///    `NoClassDefFound { requested: "ai/storyteller/vectorcraft/MainActivity" }`.
+///
+/// Asi que en vez de buscar la clase se **toma**: `MainActivity.onCreate` llama a este
+/// metodo y JNI le pasa el `jclass`, que es su propia `Class`. A partir de ahi hay una
+/// referencia global y no hace falta buscar nada.
+///
+/// MEDIDO que la firma de una nativa JNI en `jni` 0.22 lleva los tipos puestos, no
+/// punteros (`env.rs:4627`):
+///
+///     pub extern "system" fn Java_com_example_MyClass_myNativeMethod<'caller>(
+///         mut unowned_env: jni::EnvUnowned<'caller>,
+///         _this: JObject<'caller>,
+///         arg: JString<'caller>,
+///     ) -> JObject<'caller> {
+///
+/// y `EnvUnowned::with_env` es, textual de la documentacion, *"specifically intended to
+/// be used within native/foreign Java method implementations"*.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_ai_storyteller_vectorcraft_MainActivity_nativeListo<'caller>(
+    mut env: jni::EnvUnowned<'caller>,
+    clase: jni::objects::JClass<'caller>,
+) {
+    let _ = env
+        .with_env(|e| -> jni::errors::Result<()> {
+            let g = e.new_global_ref(&clase)?;
+            CLASE_JAVA.store(g.as_raw() as *mut c_void, Ordering::Release);
+            Ok(())
+        })
+        .resolve_with::<jni::errors::LogContextErrorAndDefault, _>(|| {
+            "saf: MainActivity no pudo pasar su clase a Rust".to_string()
+        });
+    log::info!("saf: clase de Java recibida: {}", CLASE_JAVA.load(Ordering::Acquire) != std::ptr::null_mut());
 }
 
 /// Java -> Rust: el selector ha terminado.
@@ -152,22 +194,22 @@ pub extern "C" fn Java_ai_storyteller_vectorcraft_MainActivity_nativeOnFilePicke
 /// `Cast` hace `Deref` a `JObject` (`refs/cast.rs:188`), asi que se puede pasar
 /// tal cual.
 fn clase<'l>(e: &mut Env<'l>) -> std::result::Result<jni::objects::JClass<'l>, jni::errors::Error> {
-    // MEDIDO: `as_cast_raw` pide `&jobject`, y `activity_as_ptr` devuelve `*mut c_void`.
-    // El error sale `expected &*mut _jobject, found &*mut c_void`.
-    let p = ACTIVITY.load(Ordering::Acquire) as jni::sys::jobject;
+    // MEDIDO: `as_cast_raw` toma `&jobject` y aqui el puntero es `*mut c_void`.
+    let p = CLASE_JAVA.load(Ordering::Acquire) as jni::sys::jobject;
     if p.is_null() {
-        return Err(jni::errors::Error::NullPtr("la Activity no esta registrada"));
+        return Err(jni::errors::Error::NullPtr("la clase de Java no ha llegado todavia"));
     }
-    // SAFETY: `p` viene de `AndroidApp::activity_as_ptr()`, que es una referencia
-    // global de JNI propiedad de `android-activity` y valida mientras el proceso. No
-    // se libera aqui, y `as_cast_raw` comprueba en tiempo de ejecucion que el objeto
-    // es de ese tipo.
+    // SAFETY: `p` es una referencia global de JNI creada en `nativeListo` con
+    // `new_global_ref`, y esa clase vive para todo el proceso. `as_cast_raw` comprueba
+    // en tiempo de ejecucion que el objeto es de ese tipo.
     let obj = unsafe { e.as_cast_raw::<jni::refs::Global<JObject>>(&p)? };
-    // MEDIDO: `FromObject` pide `&JObject` y `Cast` no convierte solo, asi que el tipo
-    // se pone explicito: `Cast: Deref<Target = Global<JObject>::Kind>` y ese `Kind` es
-    // `JObject` (`refs/cast.rs:188`).
+    // MEDIDO: `FromObject` pide `&JObject` y `Cast` no convierte solo en la posicion de
+    // un argumento aunque tenga `Deref` (`refs/cast.rs:188`): el tipo de destino va
+    // explicito.
     let objeto: &JObject = &obj;
-    jni::refs::LoaderContext::FromObject(objeto).load_class(e, jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"), false)
+    // SAFETY: la clase es de verdad una `Class` — la paso el propio `MainActivity` — y
+    // `JClass::from_raw` es lo que genera `bind_java_type!` para cada tipo de Java.
+    Ok(unsafe { jni::objects::JClass::from_raw(e, objeto.as_raw()) })
 }
 
 /// Adjuntar el hilo actual a la JVM y hacer una cosa con el `Env`.

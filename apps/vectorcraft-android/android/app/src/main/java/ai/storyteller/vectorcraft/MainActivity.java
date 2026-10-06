@@ -116,6 +116,27 @@ public class MainActivity extends NativeActivity {
      */
     private static native void nativeOnFilePicked();
 
+    /**
+     * La app esta viva y le pasa su propia {@code Class} a Rust.
+     *
+     * <p>MEDIDO por que esto existe, y son las cinco vias que fallaron antes:
+     *
+     * <ol>
+     *   <li>{@code Env::find_class} — desde un hilo nativo atado no ve clases de la app.</li>
+     *   <li>{@code Env::load_class} — prueba el classloader del hilo y luego
+     *       {@code FindClass}; en el hilo de {@code android-activity} no hay ninguno.</li>
+     *   <li>{@code LoaderContext::FromObject(&activity)} — deberia haber bastado, porque
+     *       la Activity <i>es</i> un objeto de la clase, y seguia dando
+     *       {@code NoClassDefFound { requested: "ai/storyteller/vectorcraft/MainActivity" }}.</li>
+     * </ol>
+     *
+     * <p>Un metodo nativo {@code static} recibe como segundo parametro el
+     * {@code jclass}, que es su propia {@code Class}. O sea: en vez de <b>buscar</b> la
+     * clase, se <b>toma</b>. Con eso hay una referencia global y no hace falta buscar
+     * nada mas.
+     */
+    private static native void nativeListo();
+
     /** Guarda el resultado y despierta a Rust, que esta esperando. */
     private static void publicar(String uri) {
         lastResult = uri;
@@ -394,6 +415,9 @@ public class MainActivity extends NativeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
+        // Que Rust tenga la clase de Java desde el primer momento: sin ella, SAF no
+        // puede ni arrancar el selector.
+        nativeListo();
 
         // ------------------------------------------------------------------
         // Que la ventana respete las barras del sistema.
