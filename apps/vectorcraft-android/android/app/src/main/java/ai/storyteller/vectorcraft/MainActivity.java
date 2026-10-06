@@ -420,6 +420,45 @@ public class MainActivity extends NativeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // MEDIDO, y era la causa de que SAF no abriera nada.
+        //
+        // Las metodos `native` de esta clase NO resolvian:
+        //
+        //     java.lang.UnsatisfiedLinkError: No implementation found for void
+        //     ai.storyteller.vectorcraft.MainActivity.nativeListo()
+        //     (tried Java_…_nativeListo and Java_…_nativeListo__)
+        //
+        // con la libreria **cargada** y Rust **arrancando**. MEDIDO, en el mismo
+        // lanzamiento, con los dos hilos:
+        //
+        //     14:44:51.080  8297  8315  I  vectorcraft_android: saf: JavaVM registrado
+        //     14:44:51.???  8297  8297  E  AndroidRuntime: UnsatisfiedLinkError
+        //
+        // Y MEDIDO tambien que el simbolo esta en la `.so` del propio movil:
+        //
+        //     $ llvm-readelf --dyn-syms … | grep nativeListo
+        //     180: 00000000012c3100 200 FUNC GLOBAL DEFAULT 14 Java_…_nativeListo
+        //
+        // O sea: simbolo ahi, libreria cargada, y `dlsym` devuelve null. Y MEDIDO que
+        // no es la firma: **dos** nativas distintas fallan igual —una `extern "C"` con
+        // punteros y otra `extern "system"` con tipos— y desde dos sitios distintos de
+        // su ciclo de vida, `onCreate` y `onWindowFocusChanged`.
+        //
+        // La razon es que `android.app.NativeActivity` (la de AOSP) carga la libreria por
+        // su cuenta leyendo el meta-data `android.app.lib_name`, y lo hace por el camino
+        // nativo de ANativeActivity, que **no se le comunica a ART**. El `dlsym` que ART
+        // hace para resolver un metodo `native` declarado en una clase Java busca
+        // entre las librerias que el `ClassLoader` tiene registradas, y esa no lo esta.
+        // Para ART, sencillamente, "la libreria no esta cargada".
+        //
+        // `System.loadLibrary` si se lo comunica. Y cargar dos veces la misma libreria no
+        // hace nada, asi que se llama antes de `super.onCreate()` sin miedo.
+        //
+        // El nombre sale del propio meta-data del manifiesto
+        // (`android.app.lib_name = vectorcraft_android`), o sea `libvectorcraft_android.so`,
+        // que es justo la que produce `build-android-so.yml`.
+        System.loadLibrary("vectorcraft_android");
+
         super.onCreate(savedInstanceState);
         instance = this;
         // MEDIDO: esto es una PRUEBA, no el sitio final.
