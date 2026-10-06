@@ -131,20 +131,22 @@ jobs:
         # nuevas a mitad y el fallo aparece como "noSuchMethod" en una dependencia
         # que ayer compilaba.
         #
-        # `strip` de cargo-ndk quita los simbolos de depuracion SIN aplanar el .so.
-        # Aplanarlo (strip manual) borra la tabla de excepciones, y entonces un
-        # panic de Rust aborta sin backtrace: en el logcat solo sale "Fatal signal
-        # 6" y no hay ni una linea de donde fallo. Es el peor fallo posible porque
-        # parece un fallo de la app y es un fallo del empaquetado.
         # MEDIDO: `-t` toma el NOMBRE DE ABI (`arm64-v8a`), no el triple de Rust ni
         # `androidTargetTriplet=...`. Ese prefijo era de cargo-ndk 2.x y en 3.x sale:
         #   error: invalid value 'androidTargetTriplet=aarch64-linux-android'
         #          for '--target <TARGET>'
+        #
+        # MEDIDO: `cargo ndk strip` NO existe en 3.x:
+        #   error: no such command: `strip`
+        # Y para una build de depuracion no se quiere de todas formas. Los simbolos
+        # de depuracion son lo que hace que un panic de Rust salga con backtrace: sin
+        # ellos, el logcat solo dice "Fatal signal 6" y no hay ni una linea de donde
+        # fallo. El `.so` pesa mas, y esa es justo la condicion en la que un panic se
+        # lee.
         run: |
           cargo ndk \
             -t $ANDROID_ABI \
             -o ./target \
-            strip \
             build -p vectorcraft-android --locked
           echo "--- .so producido ---"
           ls -la target/$ANDROID_TARGET/debug/libvectorcraft_android.so
