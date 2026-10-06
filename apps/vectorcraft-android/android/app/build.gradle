@@ -37,10 +37,15 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            // El .so de debug trae los simbolos. Sin esto, un panic en Rust sale
-            // como "backtrace unavailable" y no hay forma de leer donde fallo.
+            // El .so de debug lleva los simbolos, y eso ya es lo que hace que un
+            // panic de Rust salga con backtrace.
+            //
+            // MEDIDO: aqui habia tambien `debugSymbolLevel 'FULL'` y AGP 8.5 no lo
+            // tiene:
+            //   Could not find method debugSymbolLevel() for arguments [FULL]
+            // Ese es el DSL de AGP 8.9+. Los simbolos nativos los decide el
+            // compilador de Rust (`--strip-debug` o no), no Gradle.
             jniDebuggable true
-            debugSymbolLevel 'FULL'
         }
     }
 

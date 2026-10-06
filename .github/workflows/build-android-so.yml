@@ -1,0 +1,214 @@
+# Solo compila la libreria nativa. MEDIDO que hace falta separarla del APK:
+#
+# La `.so` son 393 crates y tarda ~15 min. Gradle tarda ~3. Y los dos dependen de
+# ficheros que no tienen nada que ver: tocar `MainActivity.kt` no cambia ni un byte
+# de la `.so`, y tocar `renderer.rs` no cambia ni un byte del manifiesto.
+#
+# En un solo job, cada retoque de Kotlin costs los 15 minutos de la `.so`. Con los
+# dos separados, el cambio de Kotlin cuesta 3.
+#
+# El trabajo pesado —NDK, JDK, `cargo ndk`, el strip, la comprobacion de que la
+# `.so` tiene tabla de excepciones— vive aqui. El APK se monta en
+# `build-apk.yml`, que toma siempre la `.so` de aqui que haya funcionado.
+name: build-android-so
+
+on:
+  push:
+    paths:
+      - 'apps/vectorcraft-android/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/build-android-so.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  ANDROID_TARGET: aarch64-linux-android
+  # El nombre de ABI que usa `jniLibs`. `cargo ndk` mapea este al triple de Rust.
+  ANDROID_ABI: arm64-v8a
+  # El APK busca la `.so` por este nombre en los runs de ESTE workflow.
+  SO_ARTIFACT: vectorcraft-android-so
+
+jobs:
+  so:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain de Rust
+        # MEDIDO: el `rustc` de la imagen se queda corto. `wgpu-types@30` pide 1.87
+        # y sale "rustc 1.XX is not supported by the following packages".
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Poner el rustc por delante de el de la imagen
+        # MEDIDO: la imagen trae un rustc en /usr/bin que gana al de ~/.cargo/bin
+        # segun el PATH, y ese es el viejo.
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Decir que rustc se va a usar
+        # Si esto falla, la imagen no es la que creemos y el error de mas abajo seria
+        # dificil de entender.
+        run: rustc --version && cargo --version
+
+      - name: Instalar target Android
+        run: rustup target add $ANDROID_TARGET
+
+      - name: Instalar cargo-ndk
+        # `cargo ndk` es lo que sabe que triple corresponde a que carpeta `jniLibs`.
+        run: cargo install cargo-ndk --locked
+
+      - name: Cache de target/
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: android-so-${{ hashFiles('Cargo.lock') }}
+          restore-keys: android-so-
+
+      - name: JDK 17
+        # MEDIDO: en `ubuntu-22.04` el JDK por defecto es el 11, y `sdkmanager` se
+        # niega a arrancar:
+        #   This tool requires JDK 17 or later. Your version was detected as 11.0.32.1.
+        # El orden importa: la comprobacion la hace el `sdkmanager` al arrancar.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Poner el SDK de Android en el PATH
+        # MEDIDO: sin este paso `sdkmanager` da exit 127 y el error no menciona ni el
+        # NDK ni el SDK. Y `packages` se limita a `platform-tools`: con el valor por
+        # defecto intenta instalar `tools`, que ya no existe, y el paso muere con
+        #   Warning: Failed to find package 'tools'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: true
+
+      - name: Instalar el NDK
+        # La version tiene que coincidir con `ndkVersion` de app/build.gradle. Si no,
+        # el link falla con simbolos raros y el error no menciona NDK.
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "ndk;26.1.10909125"
+          echo "NDK_DIR=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> $GITHUB_ENV
+
+      - name: Compilar la libreria nativa
+        # `--locked`: sin el, cargo resuelve versiones distintas en cada run y el
+        # fallo sale como "noSuchMethod" en una dependencia que ayer compilaba.
+        #
+        # MEDIDO: `-t` toma el NOMBRE DE ABI, no el triple de Rust. El prefijo
+        # `androidTargetTriplet=` es de cargo-ndk 2.x y en 3.x sale:
+        #   invalid value 'androidTargetTriplet=aarch64-linux-android'
+        #
+        # MEDIDO: `cargo ndk strip` NO existe en 3.x ("no such command: `strip`").
+        env:
+          ANDROID_NDK_HOME: ${{ env.NDK_DIR }}
+        run: |
+          cargo ndk -t $ANDROID_ABI -o ./target build -p vectorcraft-android --locked
+          SO=target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          echo "--- .so producido ---"
+          ls -la "$SO"
+          file "$SO"
+
+          # MEDIDO: sin esto el `.so` sale de **943 MB**. Son 237k lineas mas ~400
+          # dependencias en debug. `--strip-debug` quita SOLO la tabla DWARF (numeros
+          # de linea y tipos); NO toca `.eh_frame`, que es lo que deja que un panic
+          # salga con backtrace, ni la tabla de simbolos dinamicos, que es lo que el
+          # enlazador del movil necesita para resolver funciones de Rust. Por eso
+          # este y no un `strip` a secas.
+          #
+          # MEDIDO: `ANDROID_NDK_HOME` lo pone `cargo ndk` solo para sus hijos. Sin
+          # pasarlo como `env:` de este paso, el strip se salta en silencio.
+          echo "--- quitando la tabla de depuracion (no los simbolos) ---"
+          STRIP=$(ls "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/llvm-strip 2>/dev/null | head -1)
+          test -n "$STRIP" || { echo "::error::no encuentro llvm-strip en el NDK"; exit 1; }
+          "$STRIP" --strip-debug "$SO"
+          ls -la "$SO"
+
+      - name: Comprobar que el .so tiene tabla de excepciones
+        # Sin `.eh_frame`, un panic de Rust aborta sin backtrace y el logcat solo
+        # dice "Fatal signal 6": no hay ni una linea de donde fallo. Se comprueba
+        # aqui, cuando el arreglo es un flag y no un bug de la libreria.
+        run: |
+          SO=target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          READELF=$(ls "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/llvm-readelf 2>/dev/null | head -1)
+          "$READELF" -S "$SO" | grep -q '\.eh_frame' || {
+            echo "::error::el .so no tiene .eh_frame: los panics saldrán sin backtrace"
+            exit 1
+          }
+          echo "OK: .eh_frame presente"
+          # Tamano: sin el strip son 943 MB. Este es el aviso de que el strip fallo.
+          MB=$(( $(stat -c%s "$SO") / 1000000 ))
+          echo "### .so: ${MB} MB"
+          [ "$MB" -lt 200 ] || { echo "::error::el .so pesa ${MB} MB: el strip no ha corrido"; exit 1; }
+
+      - name: Comprobar que el .so esta COMPLETO
+        # MEDIDO que hace falta este paso. Con solo mirar el tamano, 5,8 MB para 225k
+        # lineas parece pequeno, y no hay forma de saber si la libreria esta entera o
+        # si el enlazador se comio codigo. "Es pequeno" y "esta roto" se parecen.
+        #
+        # Se comprueba lo que tiene que estar SI O SI, en vez de fiarse del tamano:
+        #
+        #   1. Secciones de codigo: `.text` tiene que ser la mayor con diferencia.
+        #      Si `.debug_*` apareciera, el strip no ha hecho su trabajo.
+        #   2. Simbolos exportados: Android resuelve funciones de Rust por la tabla
+        #      dinamica. Sin ella, el arranque falla con `UnsatisfiedLinkError` y el
+        #      error no menciona el empaquetado.
+        #   3. Los simbolos de JNI que `GameActivity` busca.
+        #
+        # El tamano por si solo no demuestra nada: tanto una libreria entera como
+        # una vacia pueden pesar lo que toque.
+        run: |
+          SO=target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt"
+          READELF=$(ls $BIN/*/bin/llvm-readelf | head -1)
+          NM=$(ls $BIN/*/bin/llvm-nm | head -1)
+          SIZE=$(ls $BIN/*/bin/llvm-size | head -1)
+
+          echo "=== las diez secciones mas grandes ==="
+          "$SIZE" -A -d "$SO" 2>/dev/null | sort -k2 -n -r | head -11 \
+            || "$READELF" -S "$SO" | head -20
+
+          echo
+          echo "=== hay secciones de depuracion? (no deberia haber) ==="
+          if "$READELF" -S "$SO" | grep -q '\.debug_'; then
+            echo "::error::quedan secciones .debug_: el strip no ha corrido"
+            exit 1
+          fi
+          echo "OK: ninguna"
+
+          echo
+          echo "=== simbolos de JNI que busca el arranque ==="
+          # `GameActivity` llama a `JNI_OnLoad` (o `ANativeActivity_onCreate`) y
+          # android-activity usa `Java_..._onCreate`. Si no esta ninguno, el .so
+          # carga pero no arranca y no hay pista de por que.
+          "$NM" -D --defined-only "$SO" | grep -iE 'JNI_OnLoad|ANativeActivity_onCreate|Java_ai_storyteller' \
+            || echo "::warning::no se ve ningun simbolo de entrada de JNI"
+
+          echo
+          echo "=== cuantos simbolos exporta ==="
+          TOTAL=$("$NM" -D --defined-only "$SO" | wc -l)
+          echo "### $TOTAL simbolos dinamicos"
+          # Un enlazador que se come codigo por error deja una tabla_EXPORT seccion
+          # sospechosamente corta. Cientos de miles es lo normal para una app de
+          # este tamano; por debajo de 10000 seria que algo se ha roto.
+          [ "$TOTAL" -gt 10000 ] || {
+            echo "::error::solo $TOTAL simbolos dinamicos: la libreria parece incompleta"
+            exit 1
+          }
+          echo "OK: la libreria esta entera"
+
+      - name: Publicar la .so
+        # El workflow del APK busca este artefacto por nombre en los runs que
+        # hayan salido bien. El nombre es la clave: si cambia, el APK se queda sin
+        # `.so` y no dice por que.
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SO_ARTIFACT }}
+          path: target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          if-no-files-found: error
+          retention-days: 30

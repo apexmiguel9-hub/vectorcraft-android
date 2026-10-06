@@ -1,0 +1,177 @@
+# Monta el APK. NO compila Rust.
+#
+# MEDIDO por que esta separado de `build-android-so.yml`:
+#
+# La `.so` son 393 crates y tarda ~15 min. Gradle tarda ~3. Y tocan ficheros que no
+# tienen relacion: cambiar `MainActivity.kt` no cambia ni un byte de la `.so`, y
+# cambiar `renderer.rs` no cambia ni un byte del manifiesto. En un solo job, cada
+# retoque de Kotlin cuesta los 15 minutos de la `.so`.
+#
+# Este workflow **siempre usa la ultima `.so` que haya compilado bien**, venga del
+# run de ahora o de hace una hora. Para eso se busca por nombre entre los runs con
+# exito del otro workflow, y no se vuelve a compilar Rust nunca.
+#
+# Se dispara por dos vias:
+#   - `push` de ficheros Android: cambio de Kotlin, manifiesto, Gradle...
+#   - `workflow_run`: la `.so` ha cambiado, hay que montar el APK con ella.
+#
+# Asi se cubren los dos casos: retoque de Android (solo 3 min) y cambio de Rust
+# (15 min + 3).
+name: build-apk
+
+on:
+  push:
+    paths:
+      - 'apps/vectorcraft-android/android/**'
+      - '.github/workflows/build-apk.yml'
+  workflow_run:
+    workflows: ['build-android-so']
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+env:
+  ANDROID_TARGET: aarch64-linux-android
+  ANDROID_ABI: arm64-v8a
+  SO_ARTIFACT: vectorcraft-android-so
+
+jobs:
+  apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JDK 17
+        # MEDIDO: en `ubuntu-22.04` el JDK por defecto es el 11 y `sdkmanager` se
+        # niega a arrancar: "This tool requires JDK 17 or later".
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Poner el SDK de Android en el PATH
+        # MEDIDO: `packages` se limita a `platform-tools`. Con el valor por defecto
+        # intenta instalar `tools`, que ya no existe, y el paso muere con
+        # "Warning: Failed to find package 'tools'" sin mencionar el NDK.
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: true
+
+      - name: Instalar el NDK
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "ndk;26.1.10909125"
+          echo "NDK_DIR=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> $GITHUB_ENV
+
+      - name: Cache de Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: apk-gradle-${{ hashFiles('apps/vectorcraft-android/android/**/*.gradle') }}
+          restore-keys: apk-gradle-
+
+      - name: Traer la ultima .so que haya compilado bien
+        # MEDIDO por que se busca y no se supone: el fallo clasico de este tipo de
+        # pipeline es montar el APK sin libreria, y el sintoma es una app que
+        # arranca y se muere con `UnsatisfiedLinkError`, que no dice nada de
+        # empaquetado.
+        #
+        # Se recorren los runs con exito de mayor a menor y se coge el primero que
+        # tenga el artefacto. Recorrer varios y no solo el ultimo es a proposito: un
+        # run puede salir verde sin el artefacto si el nombre cambio, y quedarse
+        # solo con el ultimo daria por bueno un APK sin `.so`.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          echo "buscando el artefacto '$SO_ARTIFACT' en los runs con exito de build-android-so.yml"
+          AID=""
+          FOUND_RUN=""
+          for RUN in $(gh api -X GET \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/build-android-so.yml/runs?status=success&per_page=30" \
+              --jq '.workflow_runs[].id'); do
+            A=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/artifacts" \
+                --jq ".artifacts[]|select(.name==\"$SO_ARTIFACT\")|.id" 2>/dev/null | head -1)
+            if [ -n "$A" ]; then
+              AID="$A"; FOUND_RUN="$RUN"; break
+            fi
+          done
+
+          if [ -z "$AID" ]; then
+            echo "::error::no hay ninguna .so publicada. Lanza build-android-so.yml primero."
+            exit 1
+          fi
+          echo "### .so del run $FOUND_RUN, artefacto $AID"
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$AID/zip" > so.zip
+          unzip -o -q so.zip
+          ls -la
+
+          mkdir -p apps/vectorcraft-android/android/app/src/main/jniLibs/$ANDROID_ABI
+          cp libvectorcraft_android.so \
+             apps/vectorcraft-android/android/app/src/main/jniLibs/$ANDROID_ABI/
+          chmod 644 apps/vectorcraft-android/android/app/src/main/jniLibs/$ANDROID_ABI/libvectorcraft_android.so
+          echo "### colocada en jniLibs/$ANDROID_ABI"
+          echo "### $(du -h apps/vectorcraft-android/android/app/src/main/jniLibs/$ANDROID_ABI/libvectorcraft_android.so | cut -f1)"
+
+      - name: Fijar la versión de Gradle
+        # MEDIDO: el proyecto no lleva `gradle/wrapper`, y la version de la imagen
+        # del runner no tiene por que ser la que pide el plugin de Android. Ese
+        # fallo habla de "requires Gradle 8.7" y suena a problema del plugin.
+        #
+        # En vez de subir un `.jar` binario al repo, se genera aqui.
+        working-directory: apps/vectorcraft-android/android
+        run: |
+          gradle wrapper --gradle-version 8.9 --distribution-type bin
+          ./gradlew --version | head -3
+
+      - name: Construir con Gradle
+        working-directory: apps/vectorcraft-android/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.NDK_DIR }}
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Comprobar que el APK lleva el .so dentro
+        # MEDIDO: este es el fallo mas comun de un port de Android, y el que mejor se
+        # detecta antes de instalar nada. El `.so` esta, Gradle construye bien, y el
+        # APK sale sin la libreria porque la carpeta no era la que AGP empaca.
+        run: |
+          APK=apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK" || { echo "::error::no sale el APK en $APK"; exit 1; }
+          echo "### APK: $(du -h $APK | cut -f1)"
+          echo "--- contenido ---"
+          unzip -l "$APK" | grep -E '\.so|classes.*dex|AndroidManifest' || true
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libvectorcraft_android.so' || {
+            echo "::error::el APK NO lleva lib/arm64-v8a/libvectorcraft_android.so"
+            echo "::error::el .so se traigo bien pero no se empaqueta. Revisa jniLibs y abiFilters."
+            exit 1
+          }
+          echo "OK: la libreria esta dentro con el nombre y la arquitectura correctos"
+
+      - name: Comprobar que el APK se puede instalar
+        # Un APK que `aapt` no lee es un APK que Android no instala. Se mira antes de
+        # subirlo, no en el movil.
+        run: |
+          APK=apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk
+          AAPT=$(ls "$ANDROID_SDK_ROOT"/build-tools/*/aapt2 | head -1)
+          "$AAPT" dump badging "$APK" | head -5
+          # El `application-label` y el paquete salen de aqui; si no salen, el
+          # manifiesto esta mal aunque el APK exista.
+          "$AAPT" dump badging "$APK" | grep -q "package: name" || {
+            echo "::error::aapt no lee el APK: el manifiesto esta mal"
+            exit 1
+          }
+          echo "OK: el APK es valido"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vectorcraft-android-debug
+          path: apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
