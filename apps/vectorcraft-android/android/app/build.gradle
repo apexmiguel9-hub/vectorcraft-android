@@ -88,76 +88,36 @@ dependencies {
 // `jniLibs`.
 //
 // Se ejecuta ANTES que cualquier tarea de Android, y Android depende de el.
-tasks.register('cargoBuild', Exec) {
-    workingDir "${rootDir}/../.."
-    def targetDir = "${rootDir}/../../target"
-    def target = System.getenv('CARGO_BUILD_TARGET') ?: 'aarch64-linux-android'
-    def profile = System.getenv('CARGO_PROFILE') ?: 'debug'
-
-    // `cargo ndk` habla de triples de Rust; Gradle y `jniLibs` hablan de ABI. La
-    // correspondencia es aarch64-linux-android <-> arm64-v8a, y es donde se cuelan
-    // los fallos: si no coinciden, el .so acaba en una carpeta que Android no mira y
-    // el APK sale sin él, en silencio.
-    def ndkAbis = [
-        'aarch64-linux-android': 'arm64-v8a',
-        'armv7-linux-androideabi': 'armeabi-v7a',
-        'x86_64-linux-android': 'x86_64',
-    ]
-
-    // MEDIDO: `cargo ndk` 3.x toma el NOMBRE DE ABI en `-t`, no el triple de Rust.
-    // El prefijo `androidTargetTriplet=` es de 2.x y en 3.x falla con:
-    //   invalid value 'androidTargetTriplet=aarch64-linux-android'
-    def abi = ndkAbis.get(target)
-    if (abi == null) {
-        throw new GradleException("triple de Rust sin ABI conocida: ${target}. Anadela al mapa ndkAbis.")
-    }
-
-    def args = [
-        'ndk',
-        '-t', abi,
-        '-o', targetDir,
-        'build', '-p', 'vectorcraft-android', target,
-    ]
-    if (System.getenv('CARGO_PROFILE') == 'release') {
-        args << '--release'
-    }
-
-    commandLine 'cargo', *args
-
-    environment 'CARGO_TARGET_DIR', targetDir
-    // `cargo ndk` necesita esto para saber que NDK usar.
-    environment 'ANDROID_NDK_HOME', System.getenv('ANDROID_NDK_HOME') ?: "${System.getenv('ANDROID_SDK_ROOT') ?: ''}/ndk/26.1.10909125"
-
-    // MEDIDO: aqui habia `new org.apache.tools.ant.util.OutputStreamLog()` para
-    // callar la salida de cargo. Gradle 9 no expone esa clase y el fichero entero
-    // deja de compilar:
-    //
-    //     unable to resolve class org.apache.tools.ant.util.OutputStreamLog
-    //       @ line 127, column 62
-    //
-    // Es una clase interna de Ant, nunca fue API. Se quita: en CI ya se filtra la
-    // salida con `grep -v Compiling` en el paso equivalente, y en local interesa
-    // ver lo que pasa.
-}
-
-tasks.register('cargoJniLibs', Copy) {
-    dependsOn 'cargoBuild'
-    def targetDir = "${rootDir}/../../target"
-    def profile = System.getenv('CARGO_PROFILE') ?: 'debug'
-    def dir = "${targetDir}/${System.getenv('CARGO_BUILD_TARGET') ?: 'aarch64-linux-android'}/${profile}"
-    from("${dir}/libvectorcraft_android.so") {
-        rename '.*', 'libvectorcraft_android.so'
-    }
-    into "${projectDir}/src/main/jniLibs/$ndkAbis[target]"
-}
-
-preBuild.dependsOn 'cargoJniLibs'
-
-tasks.whenTaskAdded { task ->
-    if (task.name == 'mergeDebugJniLibFolders' || task.name == 'mergeReleaseJniLibFolders') {
-        task.dependsOn 'cargoJniLibs'
-    }
-}
+// ---------------------------------------------------------------------------
+// Aqui NO se compila Rust.
+//
+// MEDIDO que hizo falta quitarlo. El `.so` lo compila `build-android-so.yml` y lo
+// coloca en `jniLibs` antes de que arranque Gradle. Que Gradle tambien compilara
+// rompia por dos sitios:
+//
+//   1. `cargo ndk` dentro de Gradle necesita el NDK y `cargo ndk` en el PATH, y
+//      el fallo sale como `Could not create task ':app:cargoBuild'`, que no dice
+//      nada de la compilacion.
+//   2. La copia de la `.so` usaba una variable (`ndkAbis`) definida dentro del
+//      closure de otro task, y Gradle no la ve:
+//
+//      Could not get unknown property 'ndkAbis' for task ':app:cargoJniLibs'
+//
+// Ademas son 15 minutos de compilacion por cada `assembleDebug`, que es lo que se
+// quiere evitar al partir el CI en dos.
+//
+// Para recompilar la libreria en local, a mano desde la raiz del repo:
+//
+//   cargo ndk -t arm64-v8a -o ./target strip \
+//       build -p vectorcraft-android --locked
+//   cp target/aarch64-linux-android/debug/libvectorcraft_android.so \
+//      apps/vectorcraft-android/android/app/src/main/jniLibs/arm64-v8a/
+//
+// Y despues `./gradlew assembleDebug`. Es el mismo camino que sigue el CI, que es
+// la unica forma de no tener dos versiones de la verdad.
+//
+// Este fichero solo empaqueta lo que encuentra en `jniLibs`. Si no esta, el APK
+// sale sin libreria, y el paso de CI que comprueba el APK lo dice.
 
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs << '-Xlint:deprecation'
