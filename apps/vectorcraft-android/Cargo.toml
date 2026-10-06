@@ -1,0 +1,41 @@
+[package]
+name = "vectorcraft-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+vectorcraft-engine = { workspace = true }
+vectorcraft-ui-egui = { workspace = true }
+vectorcraft-render = { workspace = true }
+
+# MEDIDO que hace falta: `android-game-activity`, NO `android-native-activity`.
+#
+# En el hilo de winit (v0.30) hay un reporte reproducible de Galaxy S23 con
+# Android 16: con `android-game-activity` el teclado blando abre y responde;
+# con `android-native-activity` "the software keyboard does not show at all".
+# GameActivity trae una jerarquia de vistas de Android, que es lo que el
+# InputMethodManager necesita para ensechar el teclado. El motor de render es
+# `vello_cpu` y no depende de la GPU, asi que lo demas no cambia.
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-game-activity"] }
+egui = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", default-features = false, features = ["game-activity"] }
+
+# Android carga este .so con `System.loadLibrary`, asi que tiene que ser cdylib.
+[lib]
+name = "vectorcraft_android"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+# El mismo `main` sirve de binario de escritorio: con esto se prueba en local sin
+# tocar el movil, que es donde se van a achar los bugs de logica.
+[[bin]]
+name = "vectorcraft-android"
+path = "src/main.rs"

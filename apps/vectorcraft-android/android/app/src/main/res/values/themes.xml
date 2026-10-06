@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sin ActionBar: un canvas vectorial quiere toda la pantalla y los paneles
+         van dentro de la UI de egui. Los insets de la barra de estado los recoge
+         egui con safe_area_insets(), asi que no hace falta ningun flag aqui. -->
+    <style name="Theme.VectorCraft" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#1c1c1c</item>
+    </style>
+</resources>

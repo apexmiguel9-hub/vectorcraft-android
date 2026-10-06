@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- La libreria nativa no usa red: todo el render es local. Se deja declarado
+         porque un APK sin permiso de red es mas easy de auditar, y asi queda
+         claro que VectorCraft no habla con nadie. -->
+    <uses-feature android:glEsVersion="0x00030000" android:required="false" />
+
+    <!-- Sin `android:largeHeap`: el motor es vello_cpu, y los pixeles van en
+         texturas de egui, no en el heap de Java. -->
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.VectorCraft">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="fullUser"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density|uiMode"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- MEDIDO que hace falta: `adjustResize`.
+                 Sin esto, cuando salta el teclado blando (para escribir texto en una
+                 capa de texto), la ventana no se reescala y el teclado tapa el lienzo.
+                 Con `adjustResize` el `SurfaceView` se encoge y el `safe_area_insets`
+                 de egui recoge el hueco. -->
+
+            <meta-data android:name="android.app.lib_name" android:value="vectorcraft_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

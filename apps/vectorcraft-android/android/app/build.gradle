@@ -1,0 +1,133 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'ai.storyteller.vectorcraft'
+    compileSdk 34
+    ndkVersion '26.1.10909125'
+
+    defaultConfig {
+        applicationId 'ai.storyteller.vectorcraft'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '0.3.0'
+
+        // MEDIDO: solo arm64-v8a. El motor es vello_cpu (CPU), y lo unico que hace
+        // la GPU es presentar pixeles via egui-wgpu. Una arquitectura mas es una
+        // linea en abiFilters, no codigo.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            // El .so de debug trae los simbolos. Sin esto, un panic en Rust sale
+            // como "backtrace unavailable" y no hay forma de leer donde fallo.
+            jniDebuggable true
+            debugSymbolLevel 'FULL'
+        }
+    }
+
+    packagingOptions {
+        // Los assets de VectorCraft (fuentes, pinceles, estilos) van dentro del APK.
+        jniLibs {
+            excludes += ['**/*.so', '!**/libvectorcraft_android.so']
+        }
+    }
+}
+
+dependencies {
+    // MEDIDO que hace falta: `android-game-activity`, NO `native-activity`.
+    //
+    // GameActivity da una jerarquia de vistas de Android real, que es lo que el
+    // InputMethodManager necesita para que aparezca el teclado blando. Con
+    // NativeActivity, en Android moderno (probado en Galaxy S23 / Android 16), el
+    // teclado no aparece en absoluto.
+    //
+    // La diferencia NO es solo el teclado: GameActivity tambien trae un `SurfaceView`
+    // y un `Surface` de Android de verdad, que es lo que necesita egui-wgpu para
+    // presentar. NativeActivity obliga a pelearse con el buffer swapchain a mano.
+    implementation 'org.mozilla:android-activity:0.6.1'
+    // `androidx.games:games-activity` es lo que aporta la clase `GameActivity`.
+    implementation 'androidx.games:games-activity:3.0.5'
+    implementation 'androidx.annotation:annotation:1.7.1'
+}
+
+// ---------------------------------------------------------------------------
+// El .so lo compila cargo, no Gradle.
+//
+// MEDIDO que hace falta: Gradle NO debe tocar esto. El reason es que los `.so` de
+// debug se modulizan en el directorio de target de cargo, y copiar un `.so` a
+// `jniLibs` lo aplana. Un `.so` aplanado **no tiene tabla de excepciones**, asi que
+// un panic de Rust aborta sin backtrace y sin nada util en el logcat.
+//
+// Lo que hace este target es: compilar con cargo -> `cargo ndk strip` (que quita
+// los simbolos de depuracion del `.so` de distribucion sin aplanarlo) -> copiar a
+// `jniLibs`.
+//
+// Se ejecuta ANTES que cualquier tarea de Android, y Android depende de el.
+tasks.register('cargoBuild', Exec) {
+    workingDir "${rootDir}/../.."
+    def targetDir = "${rootDir}/../../target"
+    def target = System.getenv('CARGO_BUILD_TARGET') ?: 'aarch64-linux-android'
+    def profile = System.getenv('CARGO_PROFILE') ?: 'debug'
+
+    def args = [
+        'ndk',
+        '-t', "androidTargetTriplet=${target.replace('aarch64-linux-android', 'aarch64-linux-android')}",
+        '-o', targetDir,
+        'build', '-p', 'vectorcraft-android', target,
+    ]
+    if (System.getenv('CARGO_PROFILE') == 'release') {
+        args << '--release'
+    }
+
+    commandLine 'cargo', *args
+
+    environment 'CARGO_TARGET_DIR', targetDir
+    // `cargo ndk` necesita esto para saber que NDK usar.
+    environment 'ANDROID_NDK_HOME', System.getenv('ANDROID_NDK_HOME') ?: "${System.getenv('ANDROID_SDK_ROOT') ?: ''}/ndk/26.1.10909125"
+
+    // En local, esto imprime cientos de lineas de compilacion de Rust. A menos que
+    // se pida, se calla: lo que importa es si pasa o falla.
+    standardOutput = System.getenv('VERBOSE') ? System.out : new org.apache.tools.ant.util.OutputStreamLog()
+}
+
+tasks.register('cargoJniLibs', Copy) {
+    dependsOn 'cargoBuild'
+    def targetDir = "${rootDir}/../../target"
+    def profile = System.getenv('CARGO_PROFILE') ?: 'debug'
+    def dir = "${targetDir}/${System.getenv('CARGO_BUILD_TARGET') ?: 'aarch64-linux-android'}/${profile}"
+    from("${dir}/libvectorcraft_android.so") {
+        rename '.*', 'libvectorcraft_android.so'
+    }
+    into "${projectDir}/src/main/jniLibs/arm64-v8a"
+}
+
+preBuild.dependsOn 'cargoJniLibs'
+
+tasks.whenTaskAdded { task ->
+    if (task.name == 'mergeDebugJniLibFolders' || task.name == 'mergeReleaseJniLibFolders') {
+        task.dependsOn 'cargoJniLibs'
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-Xlint:deprecation'
+}

@@ -1,0 +1,30 @@
+// Raiz del proyecto Android de VectorCraft.
+//
+// NOTA sobre NDK y arquitectura: solo se compila `arm64-v8a`. Es lo que tiene el
+// movil de pruebas, y el motor es `vello_cpu` (CPU pura), asi que el unico trabajo
+// real de la GPU es presentar pixeles por egui-wgpu. Anadir mas arquitecturas es
+// question de `abiFilters`, no de codigo.
+//
+// `android.ndkVersion` se fija para que CI y local usen la misma. Sin esto,
+// `cargo ndk` y Gradle pueden acabar usando NDKs distintas y el link falla con un
+// error que no menciona el NDK.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.5.2'
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
+}

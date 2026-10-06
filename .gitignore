@@ -5,3 +5,10 @@ plan/
 /corpus
 /log
 .DS_Store
+
+# --- Android (apps/vectorcraft-android) ---
+# local.properties lleva rutas absolutas del SDK: no se commitea.
+local.properties
+.gradle/
+# El .so lo produce cargo; se copia a jniLibs en el paso de CI.
+apps/vectorcraft-android/android/app/src/main/jniLibs/

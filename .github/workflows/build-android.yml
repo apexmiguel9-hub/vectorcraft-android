@@ -1,0 +1,186 @@
+# Compila el port de Android de VectorCraft y publica el APK.
+#
+# MEDIDO sobre como falla esto, y por que cada paso esta separado:
+#
+# - `cargo build` de 237k lineas con ~400 dependencias tarda 20-40 min. Si el fallo
+#   es de codigo Rust, se ve en el log de cargo, no en el de Gradle.
+# - El error clasico de un port Android NO es de codigo, es de empaquetado: un
+#   `.so` con el nombre mal, un target de triple distinto, o un `.so` aplanado. Por
+#   eso hay un paso que **comprueba el APK antes de darlo por bueno**: mira que el
+#   `.so` este dentro, con el nombre exacto y con tabla de excepciones.
+#
+# `android.aapt2FromMavenOverride` no hace falta: el plugin de Android ya trae aapt2.
+name: build-android
+
+on:
+  push:
+    paths:
+      - 'apps/vectorcraft-android/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # target de triple. `aarch64-linux-android` es lo que usan los moviles de 64 bits
+  # y lo que等同 `arm64-v8a` de Gradle. Si alguno no cuadra, el APK se empaqueta y
+  # luego Android lo ignora en silencio: por eso el paso de verificar.
+  ANDROID_TARGET: aarch64-linux-android
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Clonar con historial completo
+        uses: actions/checkout@v4
+
+      - name: Instalar toolchain de Rust
+        # MEDIDO: el `rustc` de la imagen de GitHub se queda corto.
+        # `wgpu-types@30` exige rustc 1.87 y sale:
+        #   "rustc 1.XX is not supported by the following packages:
+        #    wgpu-types@30.0.1 requires rustc 1.87"
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Poner el rustc por delante de el de la imagen
+        # MEDIDO: la imagen trae un rustc en /usr/bin que gana al de ~/.cargo/bin
+        # segun el PATH, y ese es el viejo. Sin esto, da el error de wgpu-types
+        # aunque se haya instalado stable.
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Comprobar el rustc que se va a usar
+        run: |
+          rustc --version
+          cargo --version
+          # Si esto falla, la imagen de la accion no es la que creemos y el error
+          # de mas abajo seria dificil de entender.
+          rustc --version | grep -oE '[0-9]+\.[0-9]+' | head -1
+
+      - name: Instalar target Android
+        run: rustup target add $ANDROID_TARGET
+
+      - name: Instalar cargo-ndk
+        # `cargo ndk` es lo que sabe qué target triple corresponde a qué carpeta
+        # `jniLibs`. Sin el, el .so acaba en un sitio que Android no mira.
+        run: cargo install cargo-ndk --locked
+
+      - name: Cache de target/
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: android-${{ hashFiles('Cargo.lock') }}
+          restore-keys: android-
+
+      - name: Cache de Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle') }}
+          restore-keys: gradle-
+
+      - name: Instalar el NDK
+        # La version tiene que coincidir con `ndkVersion` de app/build.gradle. Si
+        # no coinciden, el link falla con simbolos raros, y el error no dice "NDK".
+        run: |
+          sdkmanager "ndk;26.1.10909125"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_OUTPUT"
+
+      - name: Compilar la libreria nativa
+        # MEDIDO que hace falta `--locked`: sin el, cargo puede resolver versiones
+        # nuevas a mitad y el fallo aparece como "noSuchMethod" en una dependencia
+        # que ayer compilaba.
+        #
+        # `strip` de cargo-ndk quita los simbolos de depuracion SIN aplanar el .so.
+        # Aplanarlo (strip manual) borra la tabla de excepciones, y entonces un
+        # panic de Rust aborta sin backtrace: en el logcat solo sale "Fatal signal
+        # 6" y no hay ni una linea de donde fallo. Es el peor fallo posible porque
+        # parece un fallo de la app y es un fallo del empaquetado.
+        run: |
+          cargo ndk \
+            -t androidTargetTriplet=$ANDROID_TARGET \
+            -o ./target \
+            strip \
+            build -p vectorcraft-android $ANDROID_TARGET --locked
+          echo "--- .so producido ---"
+          ls -la target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          file target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+
+      - name: Comprobar que el .so tiene tabla de excepciones
+        # Si esto falla, el paso anterior no hizo strip bien y cualquier panic va a
+        # salir sin backtrace. Se comprueba ANTES de empaquetar, cuando el arreglo
+        # es un flag y no un bug de native.
+        run: |
+          SO=target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          if command -v llvm-readelf >/dev/null; then
+            llvm-readelf -S "$SO" | grep -q '\.eh_frame' || {
+              echo "::error::el .so no tiene .eh_frame: se aplo y los panics saldrán sin backtrace"
+              exit 1
+            }
+          else
+            echo "::warning::no hay llvm-readelf; no se comprueba .eh_frame"
+          fi
+          # Y el simbolo que Android busca para el entry point:
+          if command -v llvm-nm >/dev/null; then
+            llvm-nm -D --defined-only "$SO" | grep -i 'ANativeActivity_onCreate\|JNI_OnLoad' \
+              || echo "::warning::no se ve el simbolo de entrada; GameActivity lo pedira en runtime"
+          fi
+
+      - name: Empaquetar el APK
+        # Se copia el .so a mano en vez de dejar que lo haga cargo-ndk por dentro, para
+        # que quede explicito en un paso y se pueda ver en el log.
+        working-directory: apps/vectorcraft-android/android
+        run: |
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          cp ../../../../target/$ANDROID_TARGET/debug/libvectorcraft_android.so \
+             app/src/main/jniLibs/arm64-v8a/libvectorcraft_android.so
+          chmod 644 app/src/main/jniLibs/arm64-v8a/libvectorcraft_android.so
+          ls -la app/src/main/jniLibs/arm64-v8a/
+          chmod +x gradlew 2>/dev/null || true
+
+      - name: Construir con Gradle
+        working-directory: apps/vectorcraft-android/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: |
+          gradle --no-daemon assembleDebug
+
+      - name: Comprobar que el APK lleva el .so dentro
+        # MEDIDO: el fallo mas comun de un port de Android. El .so se compila bien,
+        # Gradle construye bien, y el APK sale sin el porque la carpeta no era la que
+        # AGP empaca. Se comprueba con `unzip -l`, que no necesita instalar nada.
+        run: |
+          APK=apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK" || { echo "::error::no sale el APK en $APK"; exit 1; }
+          echo "--- contenido relevante del APK ---"
+          unzip -l "$APK" | grep -E '\.so|AndroidManifest|classes' || true
+          echo "--- buscando la libreria ---"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libvectorcraft_android.so' || {
+            echo "::error::el APK NO lleva lib/arm64-v8a/libvectorcraft_android.so"
+            echo "::error::el .so se compila pero no se empaqueta. Revisa jniLibs y abiFilters."
+            exit 1
+          }
+          echo "OK: el .so esta dentro con el nombre y la arquitectura correctos"
+
+      - name: Subir el APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vectorcraft-android-debug
+          path: apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Resumen de lo que se ha empaquetado
+        # Que quede por escrito que tamano tiene el .so: si se dispara de golpe,
+        # lo normal es que se ha creado un binario de debug sin strip.
+        run: |
+          SO=target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          echo "### .so: $(du -h $SO | cut -f1)"
+          echo "### APK: $(du -h apps/vectorcraft-android/android/app/build/outputs/apk/debug/app-debug.apk | cut -f1)"
+          echo "### Un .so de mas de 200 MB significa que no se ha stripped."
