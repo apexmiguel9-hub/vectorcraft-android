@@ -73,6 +73,19 @@ const PRESETS_MARGIN_X: f32 = 22.0 + 14.0;
 const DETAILS_MARGIN_X: f32 = 18.0 + 18.0;
 /// Width of the Presets column.
 const PRESETS: f32 = 640.0;
+/// MEASURED: vertical inner margins. The Presets frame is `Margin { top: 14, bottom: 18, .. }`
+/// and the Details one is `Margin::same(18)`. Same trap as `PRESETS_MARGIN_X`: these sit
+/// *on top of* a `set_min_height`, not inside it, so the window comes out taller than
+/// the height asked for.
+const PRESETS_MARGIN_Y: f32 = 14.0 + 18.0;
+const DETAILS_MARGIN_Y: f32 = 18.0 + 18.0;
+/// MEASURED: `window()` anchors the dialog at `Align2::CENTER_CENTER, [0.0, -20.0]`,
+/// i.e. 20pt above centre. Harmless on a tall window; on a 443pt-tall one it is what
+/// pushes the top edge off the screen.
+/// MEASURED: height of the Cancel/OK row at the bottom of the Details column, which
+/// sits outside the `ScrollArea` and therefore adds to the window height.
+const ANCHOR_Y: f32 = -20.0;
+const BUTTON_ROW: f32 = 44.0;
 /// Floor for the dialog height, so a very short window still shows something.
 const MIN_HEIGHT: f32 = 200.0;
 
@@ -256,8 +269,26 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         let avail = ctx.content_rect();
         // A 94% of the room, so the dialog never touches the edges: the point of
         // this is for it to look *placed*, not merely not-clipped.
-        let avail_w = ((avail.width() - PRESETS_MARGIN_X - DETAILS_MARGIN_X) * 0.94).max(1.0);
-        let height = ((avail.height() - 16.0) * 0.98).min(HEIGHT).max(MIN_HEIGHT);
+        let gap = ui.spacing().item_spacing.x;
+        let avail_w = ((avail.width() - PRESETS_MARGIN_X - DETAILS_MARGIN_X - gap) * 0.94).max(1.0);
+        // MEASURED, off a real phone log:
+        //
+        //     viewport [0.0 0.0] - [937.4 443.1]
+        //     ventana  [12.3 -13.5] - [925.3 443.0]
+        //
+        // The width was fine — 913 inside 937 — but the top edge sat at **y = -13.5**,
+        // outside the screen. Two reasons, and both are the same one as the width bug:
+        //
+        //   1. `set_min_height` is *inside* the Details frame, so its 36pt of inner
+        //      margin is added on top. The window is taller than the height asked for.
+        //   2. The anchor shifts it another -20pt, which a 443pt-tall screen has no
+        //      room for once the dialog is centred.
+        //
+        // So the height that gets requested is the *total* minus the frame margins,
+        // minus the button row that sits outside the `ScrollArea`, and the whole thing
+        // leaves room for the anchor shift.
+        let max_total_h = avail.height() + ANCHOR_Y - 32.0;
+        let height = (max_total_h - DETAILS_MARGIN_Y - BUTTON_ROW).min(HEIGHT).max(MIN_HEIGHT);
         // Details never takes more than 45%, so on a narrow screen both columns stay
         // usable instead of Details eating everything.
         let details_w = DETAILS.min(avail_w * 0.45);
@@ -266,7 +297,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 22, right: 14, top: 14, bottom: 18 }).show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.set_width(presets_w);
-                    ui.set_min_height(height - 32.0);
+                    ui.set_min_height(height - PRESETS_MARGIN_Y);
                     presets(app, ui, &mut d, height);
                 });
             });
@@ -276,7 +307,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     ui.set_min_height(height);
                     egui::ScrollArea::vertical()
                         .id_salt("newdoc-details")
-                        .max_height((height - 36.0).max(0.0))
+                        .max_height((height - DETAILS_MARGIN_Y).max(0.0))
                         .auto_shrink([false, false])
                         .show(ui, |ui| details(app, ui, &mut d, &mut b));
                 });
