@@ -152,16 +152,22 @@ pub extern "C" fn Java_ai_storyteller_vectorcraft_MainActivity_nativeOnFilePicke
 /// `Cast` hace `Deref` a `JObject` (`refs/cast.rs:188`), asi que se puede pasar
 /// tal cual.
 fn clase<'l>(e: &mut Env<'l>) -> std::result::Result<jni::objects::JClass<'l>, jni::errors::Error> {
-    let p = ACTIVITY.load(Ordering::Acquire);
+    // MEDIDO: `as_cast_raw` pide `&jobject`, y `activity_as_ptr` devuelve `*mut c_void`.
+    // El error sale `expected &*mut _jobject, found &*mut c_void`.
+    let p = ACTIVITY.load(Ordering::Acquire) as jni::sys::jobject;
     if p.is_null() {
         return Err(jni::errors::Error::NullPtr("la Activity no esta registrada"));
     }
     // SAFETY: `p` viene de `AndroidApp::activity_as_ptr()`, que es una referencia
     // global de JNI propiedad de `android-activity` y valida mientras el proceso. No
-    // se libera aqui, y `as_cast_raw` hace una comprobacion en tiempo de ejecucion de
-    // que el objeto es de ese tipo.
+    // se libera aqui, y `as_cast_raw` comprueba en tiempo de ejecucion que el objeto
+    // es de ese tipo.
     let obj = unsafe { e.as_cast_raw::<jni::refs::Global<JObject>>(&p)? };
-    jni::refs::LoaderContext::FromObject(obj).load_class(e, jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"), false)
+    // MEDIDO: `FromObject` pide `&JObject` y `Cast` no convierte solo, asi que el tipo
+    // se pone explicito: `Cast: Deref<Target = Global<JObject>::Kind>` y ese `Kind` es
+    // `JObject` (`refs/cast.rs:188`).
+    let objeto: &JObject = &obj;
+    jni::refs::LoaderContext::FromObject(objeto).load_class(e, jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"), false)
 }
 
 /// Adjuntar el hilo actual a la JVM y hacer una cosa con el `Env`.
