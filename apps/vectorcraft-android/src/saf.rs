@@ -52,8 +52,9 @@
 //! por `call_static_method` solo se llega a `JPrimitiveArray` pasando por
 //! `from_raw`, que es `unsafe` y en `jni` 0.22 implica pelear con los lifetimes del
 //! `Env`. Eso es justo lo que no se puede comprobar sin compilar, y este JNI esta
-//! escrito a mano. Con cadenas —`new_string`/`get_string`, comprobados leyendo el
-//! codigo del crate— no hay superficie de error, y el motor ya usa base64 para mover
+//! escrito a mano. Con cadenas —`Env::new_string` y `JString::try_to_string`, los dos
+//! comprobados leyendo el codigo del crate— no hay superficie de error, y el motor ya
+//! usa base64 para mover
 //! bytes por sus parametros (`{name, dataBase64}`), asi que el formato es el del
 //! proyecto y no una invencion del port.
 //!
@@ -139,6 +140,42 @@ where
     con_env(f)?
 }
 
+/// Un `JObject` devuelto por una llamada Java, convertido al tipo que hizo falta.
+///
+/// MEDIDO: **no existe `From<JObject> for JString`** en `jni` 0.22, asi que
+/// `o.into()` no compila:
+///
+///     the trait bound `JString<'_>: From<JObject<'_>>` is not satisfied
+///
+/// El camino que ofrece el crate es `Reference::from_raw`, que es `unsafe`. Aqui es
+/// legitimo: el objeto lo ha devuelto JNI en esta misma llamada, es una referencia
+/// local viva y no se guarda mas alla del `Env`.
+fn como<T: jni::objects::Reference>(e: &Env<'_>, o: JObject<'_>) -> T {
+    let crudo = o.into_raw();
+    // SAFETY: ver arriba: la referencia viene de la llamada JNI que la acaba de crear.
+    unsafe { T::from_raw(e, crudo) }
+}
+
+/// El `String` que devuelve una llamada Java, o cadena vacia si devuelve `null`.
+///
+/// MEDIDO que no se usa `Env::get_string` porque en `jni` 0.22 esta **deprecado**:
+///
+///     #[deprecated(since = "0.22.0",
+///        note = "use JString::mutf8_chars or JString::to_string instead")]
+///     pub fn get_string…(…)
+///
+/// Y el workspace compila con `clippy -D warnings`, asi que deprecado es fallo de
+/// compilacion aunque el tipo cuadre. `try_to_string` es el sustituto.
+fn texto(e: &mut Env<'_>, v: jni::JValueOwned<'_>) -> std::result::Result<String, jni::errors::Error> {
+    match v {
+        jni::JValueOwned::Object(o) => {
+            let s: JString = como(e, o);
+            s.try_to_string(e)
+        }
+        _ => Ok(String::new()),
+    }
+}
+
 /// La excepcion pendiente de Java, si la hay.
 ///
 /// Sin esto un `SecurityException` de `ContentResolver` seria un error generico de
@@ -178,13 +215,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
             &[jni::JValue::Int(mode), jni::JValue::Object(&jt), jni::JValue::Object(&jm)],
         )?;
         // `request` devuelve `null` si arranco bien, o el motivo del fallo.
-        let texto: String = match v {
-            jni::JValueOwned::Object(o) => {
-                let s: JString = o.into();
-                e.get_string(&s)?.into()
-            }
-            _ => String::new(),
-        };
+        let texto = texto(e, v)?;
         Ok(Ok(if texto.is_empty() { None } else { Some(texto) }))
     })?;
 
@@ -213,14 +244,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
     let uri = env(|e| {
         let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
         let v = e.call_static_method(&clase, jni::jni_str!("takeResult"), jni::jni_sig!("()Ljava/lang/String;"), &[])?;
-        Ok(Ok(match v {
-            jni::JValueOwned::Object(o) => {
-                let s: JString = o.into();
-                let t: String = e.get_string(&s)?.into();
-                t
-            }
-            _ => String::new(),
-        }))
+        Ok(Ok(texto(e, v)?))
     })?;
 
     if uri.is_empty() {
@@ -283,14 +307,7 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
             jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
             &[jni::JValue::Object(&ju)],
         )?;
-        Ok(Ok(match v {
-            jni::JValueOwned::Object(o) => {
-                let s: JString = o.into();
-                let t: String = e.get_string(&s)?.into();
-                t
-            }
-            _ => String::new(),
-        }))
+        Ok(Ok(texto(e, v)?))
     })?;
 
     if let Some(x) = env(|e| Ok(excepcion(e))) {
@@ -344,14 +361,7 @@ pub fn nombre(uri: &str) -> Option<String> {
             jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
             &[jni::JValue::Object(&ju)],
         )?;
-        Ok(Ok(match v {
-            jni::JValueOwned::Object(o) => {
-                let s: JString = o.into();
-                let t: String = e.get_string(&s)?.into();
-                t
-            }
-            _ => String::new(),
-        }))
+        Ok(Ok(texto(e, v)?))
     })
     .ok()?;
     if n.is_empty() {
