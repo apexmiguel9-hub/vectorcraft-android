@@ -196,6 +196,7 @@ fn excepcion(env: &mut Env) -> Option<String> {
 /// Bloqueante a proposito, igual que `rfd` en escritorio: el picker es modal. El
 /// despertar lo manda Java, no winit — ver el modulo.
 fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String> {
+    log::info!("saf: pidiendo modo {mode}, mimes \"{mimes}\"");
     match RESUELTO.lock() {
         Ok(mut g) => *g = false,
         Err(e) => *e.into_inner() = false,
@@ -203,7 +204,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
 
     let (titulo, mimes) = (titulo.to_string(), mimes.to_string());
     env(move |e| {
-        let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
         let t = e.new_string(&titulo)?;
         let m = e.new_string(&mimes)?;
         let (jt, jm): (JObject, JObject) = (t.into(), m.into());
@@ -241,7 +242,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
 
     // Recoger el resultado. `takeResult` devuelve `null` si se cancelo.
     let uri = env(|e| {
-        let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
         let v = e.call_static_method(&clase, jni::jni_str!("takeResult"), jni::jni_sig!("()Ljava/lang/String;"), &[])?;
         Ok(Ok(texto(e, v)?))
     })?;
@@ -252,6 +253,25 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
     } else {
         log::info!("saf: elegido {uri}");
         Ok(Some(uri))
+    }
+}
+
+/// `pedir` al gancho, registrando el fallo.
+///
+/// MEDIDO que esto hace falta y que la version con `.ok().flatten()` **ocultaba el
+/// fallo entero**. En el movil SAF no arranco y lo unico que aparecio fue el estado
+/// `cancelled` —que es lo que pone `io.rs:70` cuando `pick_open` devuelve `None`—.
+/// Ni un log, ni un mensaje al usuario, ni un crash. Y lo que se veia en pantalla era
+/// "no abre", que no dice nada de por que.
+///
+/// Instrumentacion que no falla ruidosamente es un fallo silencioso con pasos.
+fn o_none(r: Result<Option<String>, String>, que: &str) -> Option<String> {
+    match r {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("saf: {que} fallo: {e}");
+            None
+        }
     }
 }
 
@@ -300,7 +320,7 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
     // Sale `borrow of moved value: uri`. Una copia para el log y listo.
     let etiqueta = uri.clone();
     let b64 = env(move |e| {
-        let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
         let u = e.new_string(&uri)?;
         let ju: JObject = u.into();
         let v = e.call_static_method(
@@ -337,7 +357,7 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
     let etiqueta = uri.clone();
     let b64 = vectorcraft_format::base64_encode(bytes);
     env(move |e| {
-        let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
         let u = e.new_string(&uri)?;
         let d = e.new_string(&b64)?;
         let (ju, jd): (JObject, JObject) = (u.into(), d.into());
@@ -369,7 +389,7 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
 pub fn nombre(uri: &str) -> Option<String> {
     let uri = uri.to_string();
     let n = env(move |e| {
-        let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
+        let clase = e.load_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
         let u = e.new_string(&uri)?;
         let ju: JObject = u.into();
         let v = e.call_static_method(
@@ -432,8 +452,8 @@ pub fn services() -> Services {
         // devuelve `Result<Option<String>, String>` porque necesita poder fallar, y un
         // fallo de SAF se trata como "el usuario no eligio nada", que es lo que un
         // `Option` significa aqui.
-        pick_open: Some(Box::new(|pick: &FilePick| pedir(MODO_ABRIR, "Abrir", &mimes(&pick.filters)).ok().flatten())),
-        pick_save: Some(Box::new(|pick: &FilePick| pedir(MODO_GUARDAR, &pick.name, &mimes(&pick.filters)).ok().flatten())),
+        pick_open: Some(Box::new(|pick: &FilePick| o_none(pedir(MODO_ABRIR, "Abrir", &mimes(&pick.filters)), "abrir"))),
+        pick_save: Some(Box::new(|pick: &FilePick| o_none(pedir(MODO_GUARDAR, &pick.name, &mimes(&pick.filters)), "guardar"))),
         pick_open_multi: Some(Box::new(|| {
             let uris = match pedir(MODO_ABRIR_MULTI, "Abrir", "") {
                 Ok(u) => u,
@@ -449,7 +469,7 @@ pub fn services() -> Services {
                 .unwrap_or_default()
         })),
         // MEDIDO: `pick_folder` es `Box<dyn FnMut() -> Option<String>>` (`lib.rs:185`).
-        pick_folder: Some(Box::new(|| pedir(MODO_CARPETA, "Elegir carpeta", "").ok().flatten())),
+        pick_folder: Some(Box::new(|| o_none(pedir(MODO_CARPETA, "Elegir carpeta", ""), "elegir carpeta"))),
         read: Some(Box::new(|path: &str| {
             if es_uri(path) {
                 leer(path)
