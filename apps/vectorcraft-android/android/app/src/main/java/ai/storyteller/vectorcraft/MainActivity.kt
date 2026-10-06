@@ -1,41 +1,41 @@
 package ai.storyteller.vectorcraft
 
 import android.os.Bundle
-import androidx.games.activity.GameActivity
+import org.mozilla.android.activity.NativeActivity
 
 /**
  * El Activity de VectorCraft en Android.
  *
- * Lo único que hace es heredar de [GameActivity] y dejar que la librería nativa
- * arranque. Ese es el motivo de la choice de backend, y está medido:
+ * Hereda de [NativeActivity] y no hace nada mas: la libreria nativa toma el
+ * control desde `android_main`.
  *
- * **Por que `GameActivity` y no `NativeActivity`.**
+ * **Por que `NativeActivity` y no `GameActivity`.**
  *
- * Con `native-activity` el teclado blando **no aparece** en Android moderno. Hay un
- * reporte reproducible de un Galaxy S23 con Android 16 en el hilo de winit v0.30:
- * *"the software keyboard does not show at all"*. La razón es que el teclado lo
- * hace el `InputMethodManager` a través de una vista de Android, y `NativeActivity`
- * no tiene una.
+ * Es lo que usa el ejemplo oficial de egui, y es el unico camino con un
+ * `android_main` que se sabe que arranca. `GameActivity` busca el punto de entrada
+ * por otro mecanismo y no tiene ejemplo equivalente.
  *
- * `GameActivity` sí tiene una: trae una jerarquía de vistas de verdad. Por eso el
- * teclado abre y responde.
+ * **Lo que cuesta, medido.** Con `NativeActivity` el teclado blando no aparece en
+ * Android moderno: hay un reporte reproducible de un Galaxy S23 con Android 16 en el
+ * hilo de winit v0.30 —*"the software keyboard does not show at all"*— porque el
+ * teclado lo gestiona el `InputMethodManager` a traves de una vista, y
+ * `NativeActivity` no tiene ninguna.
  *
- * **Segunda razón, igual de importante.** `GameActivity` aporta un `SurfaceView` y
- * un `Surface` de Android de verdad, que es lo que egui-wgpu necesita para
- * presentar píxeles. Con `NativeActivity` hay que arrancar el swapchain a mano.
+ * Se acepta ese problema a proposito: primero que la app abra y se vea el editor
+ * entero, despues el teclado. Cuando se quiera arreglar, son tres cambios y estan
+ * anotados en `apps/vectorcraft-android/src/lib.rs`: la feature del `Cargo.toml`,
+ * el `android-activity` con `features = ["game-activity"]`, y esta clase pasando a
+ * `GameActivity`.
  *
- * **Y esto no estropea el render.** El documento se rasteriza en CPU con `vello_cpu`;
- * la GPU solo presenta píxeles ya calculados. No hay compute shader en el camino, así
- * que el mismo binario funciona en un PowerVR de gama baja igual que en un
+ * **El render no se resiente.** El documento se rasteriza en CPU con `vello_cpu`; la
+ * GPU solo presenta pixeles ya calculados. No hay compute shader en el camino, asi
+ * que el mismo binario funciona igual en un PowerVR de gama baja que en un
  * Snapdragon.
  *
- * **Teclado: llega como texto, no como teclas.** La documentación de Android es
- * explícita: *"You should never rely on receiving KeyEvents for any key on a soft
- * input method"*. egui gestiona `Event::Text` por su cuenta, así que escribir texto
- * en una capa funciona; lo que no hay es atajos de teclado, y en un móvil no los
- * hay.
+ * **Textos sin acentos en los comentarios** a proposito: se compilan con el NDK sin
+ * depender de la codificacion de ficheros.
  */
-class MainActivity : GameActivity() {
+class MainActivity : NativeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // `GameActivity.onCreate` carga el .so declarado en el manifest
         // (`android.app.lib_name` = `vectorcraft_android`) y le pasa el control al

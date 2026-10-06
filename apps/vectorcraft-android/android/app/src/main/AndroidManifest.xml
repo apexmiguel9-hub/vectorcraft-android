@@ -30,6 +30,11 @@
                  de egui recoge el hueco. -->
 
             <meta-data android:name="android.app.lib_name" android:value="vectorcraft_android" />
+            <!-- MEDIDO: el nombre de la libreria tiene que coincidir EXACTO con el
+                 `[lib] name` del Cargo.toml. Si no, el .so se empaqueta pero Android
+                 no lo encuentra y la app muere con UnsatisfiedLinkError, que no
+                 menciona el empaquetado. -->
+            <meta-data android:name="android.app.borrowed_native_libs" android:value="vectorcraft_android" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

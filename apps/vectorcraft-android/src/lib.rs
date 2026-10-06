@@ -1,26 +1,22 @@
 //! VectorCraft en Android: el crate, no el binario.
 //!
-//! # Que hay aqui y por que
-//!
 //! `VectorcraftApp` es el MISMO editor que corre en escritorio y en la web. No hay
 //! una UI para movil aparte. Este crate solo monta la ventana y conecta los tres
-//! metodos que `eframe::App` necesita (`logic`, `raw_input_hook`, `ui`).
+//! metodos que `eframe::App` necesita.
 //!
 //! ## Render: CPU, no GPU
 //!
-//! El motor rasteriza con `vello_cpu`: CPU pura, con SIMD para aarch64 y
-//! multihilo con rayon. En un movil no depende de compute shader ni de lo que el
-//! driver de la GPU sepa hacer. La GPU solo presenta pixeles ya calculados, a
-//! traves de egui-wgpu.
+//! El motor rasteriza con `vello_cpu`: CPU pura, con SIMD para aarch64 y multihilo
+//! con rayon. En un movil no depende de compute shader ni de lo que el driver de la
+//! GPU sepa hacer. La GPU solo presenta pixeles ya calculados, por egui-wgpu.
 //!
 //! ## Gestos: ya estan hechos, y verificado por que
 //!
-//! egui 0.36 trae `zoom_delta()`, `zoom_delta_2d()`, `rotation_delta()`,
-//! `translation_delta()` y `multi_touch()`. No hay codigo de gestos aqui porque no
-//! hay que escribirlo.
+//! egui 0.36 trae `zoom_delta()`, `rotation_delta()`, `translation_delta()` y
+//! `multi_touch()`. No hay codigo de gestos aqui porque no hay que escribirlo.
 //!
-//! Que egui reciba varios dedos en Android esta verificado leyendo el backend de
-//! winit v0.30.13, `src/platform_impl/android/mod.rs`:
+//! Que Android le llegue varios dedos esta verificado leyendo winit 0.30.13,
+//! `src/platform_impl/android/mod.rs`:
 //!
 //! ```text
 //! MotionAction::Down | PointerDown => TouchPhase::Started
@@ -30,26 +26,50 @@
 //! ```
 //!
 //! egui-winit convierte cada `WindowEvent::Touch` en un `egui::Event::Touch` con su
-//! `TouchId`, y `Context::multi_touch()` agrupa por id. Es exactamente el protocolo
-//! que egui espera, asi que pinch-zoom y pan de dos dedos funcionan sin codigo
-//! nuestro.
+//! `TouchId`, y `Context::multi_touch()` agrupa por id. Pinch-zoom y pan de dos
+//! dedos funcionan sin codigo nuestro.
 //!
-//! ## Teclado: por que `android-game-activity`
+//! ## El punto de entrada, y por que este y no otro
 //!
-//! En el hilo de winit v0.30 hay un reporte reproducible de un Galaxy S23 con
-//! Android 16: con `android-game-activity` el teclado blando abre y responde; con
-//! `android-native-activity` no aparece. GameActivity da una jerarquia de vistas de
-//! Android real, que es lo que necesita el InputMethodManager.
+//! MEDIDO, y fue el fallo que mas tiempo costo: **un `cdylib` de Rust sin ningun
+//! `#[no_mangle]` se queda vacio.** El enlazador borra todo lo que no sea alcanzable
+//! desde las exportaciones, y en Rust lo unico que se exporta es lo marcado con
+//! `#[no_mangle]`. Sin eso, el `.so` compila, Gradle lo empaqueta, la app instala
+//! y muere al arrancar —sin `.eh_frame` ni pista.
 //!
-//! La documentacion de Android es explicita en que no se puede depender de que el
-//! teclado blando mande eventos de tecla, asi que el texto llega como `Event::Text`,
-//! no como pulsaciones. egui lo gestiona.
+//! Lo que se veia era un `.so` de 5,8 MB con **566 KB de `.text` y 3 simbolos
+//! dinamicos** para 225.484 lineas de codigo. El tamano no lo delata: la mayor parte
+//! de esos 5,8 MB eran datos de depuracion comprimidos. "Es pequeno" y "esta roto"
+//! se parecen, asi que el workflow comprueba la tabla de simbolos en vez de
+//! fiarse del peso.
+//!
+//! De ahi sale la forma exacta de `android_main`, que es **el patron del ejemplo
+//! oficial de egui** (`eframe/examples/hello_android`): el `AndroidApp` **no se
+//! pasa como argumento aparte**, va en `NativeOptions::android_app`, porque es lo
+//! que el `EventLoop` de winit necesita para construirse.
+//!
+//! ## Teclado: `native-activity` y lo que cuesta
+//!
+//! Hay un reporte reproducible de winit de que con `android-native-activity` el
+//! teclado blando **no aparece** en Android moderno (Galaxy S23 / Android 16),
+//! mientras que con `android-game-activity` si. El motivo es que el teclado lo
+//! gestiona el `InputMethodManager` a traves de una vista, y `NativeActivity` no
+//! tiene una.
+//!
+//! Se usa `android-native-activity` **aun asi**, porque es el unico camino con un
+//! ejemplo oficial que se sabe que arranca, y lo prioritario es que la libreria se
+//! vea entera y la app abra. El teclado es el siguiente problema, no el primero.
+//!
+//! Cuando se quiera, cambiar a `android-game-activity` es: la feature en el
+//! `Cargo.toml`, el `android-activity` con `features = ["game-activity"]`, y el
+//! `MainActivity` que herede de `GameActivity` en vez de `NativeActivity`.
 //!
 //! ## Insets
 //!
-//! `egui::InputState::safe_area_insets()` ya cubre status bar, barra de navegacion
-//! y notch. `content_rect()` da el area segura, `viewport_rect()` la completa. La
-//! UI no se mete debajo de la camara sin codigo extra.
+//! `egui::InputState::safe_area_insets()` cubre status bar, barra de navegacion y
+//! notch en las plataformas donde winit lo implementa. Ojo: en `winit` v0.30 esa
+//! ruta solo esta implementada para iOS; en Android hay que reservarlo a mano (el
+//! ejemplo de egui reserva 32 puntos arriba con un `Panel::top`).
 
 use vectorcraft_engine::Session;
 use vectorcraft_ui_egui::{Services, VectorcraftApp};
@@ -72,12 +92,21 @@ impl eframe::App for App {
     }
 }
 
+/// Construye el editor.
+///
+/// `Services` va sin los hooks de escritorio a proposito: sin `pick_open` (no hay
+/// dialogo nativo), sin `system_clipboard` (egui hace el suyo), sin `open_url`.
+/// Cada hueco degrada a un mensaje en vez de romper, que es el mismo camino que usa
+/// la build web.
+pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn eframe::App>, String> {
+    Ok(Box::new(App(VectorcraftApp::new(Session::new(), Services::default()))))
+}
+
 /// Opciones de ventana.
 ///
 /// Pantalla completa y sin marco: un canvas vectorial quiere toda la pantalla, y los
-/// paneles van dentro de la UI en vez de en barras del sistema. El tamano minimo es
-/// de un movil pequeno en vertical.
-pub fn native_options() -> eframe::NativeOptions {
+/// paneles van dentro de la UI en vez de en barras del sistema.
+fn window_options() -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
@@ -88,18 +117,35 @@ pub fn native_options() -> eframe::NativeOptions {
     }
 }
 
-/// Construye el editor.
-///
-/// `Services` va sin los hooks de escritorio a proposito: sin `pick_open` (no hay
-/// dialogo nativo de archivos), sin `system_clipboard` (egui hace el suyo), sin
-/// `open_url`. Cada hueco degrada a un mensaje en vez de romper, que es el mismo
-/// camino que usa la build web. Anadir SAF de Android es trabajo posterior y
-/// localized, no un bloqueante para pintar.
-pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn eframe::App>, String> {
-    Ok(Box::new(App(VectorcraftApp::new(Session::new(), Services::default()))))
-}
-
 /// Arranque en escritorio, para probar sin movil.
 pub fn run() -> eframe::Result {
-    eframe::run_native("VectorCraft", native_options(), Box::new(|cc| build(cc).map_err(|e| e.into())))
+    eframe::run_native("VectorCraft", window_options(), Box::new(|cc| build(cc).map_err(|e| e.into())))
+}
+
+/// Punto de entrada en Android.
+///
+/// Sin esto el `.so` sale VACIO. Ver el comentario del modulo: un `cdylib` sin
+/// `#[no_mangle]` se queda sin codigo porque el enlazador tira lo que no sea
+/// alcanzable desde las exportaciones.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidApp) {
+    // Al log de Android. Sin esto, `log::info!` del motor no aparece en el logcat y
+    // no hay ni un solo dato de lo que hace la libreria en el movil.
+    android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info));
+
+    // El `AndroidApp` va DENTRO de las opciones, no como argumento aparte: es lo que
+    // el `EventLoop` de winit necesita para construirse, y sin el se queda sin
+    // bucle de eventos.
+    let options = eframe::NativeOptions { android_app: Some(app), ..window_options() };
+
+    let resultado = eframe::run_native("VectorCraft", options, Box::new(|cc| build(cc).map_err(|e| e.into())));
+
+    // MEDIDO por que esto NO es un `panic!`: el proyecto prohibe panicos en codigo que
+    // se reparte, y este es ese codigo. `run_native` devuelve `Err` si no puede
+    // crear la ventana o el contexto de render, y un abort aqui sale como "Fatal
+    // signal 6", que no dice nada de por que.
+    if let Err(e) = resultado {
+        log::error!("vectorcraft-android: no se pudo arrancar: {e:?}");
+    }
 }

@@ -13,22 +13,32 @@ vectorcraft-engine = { workspace = true }
 vectorcraft-ui-egui = { workspace = true }
 vectorcraft-render = { workspace = true }
 
-# MEDIDO que hace falta: `android-game-activity`, NO `android-native-activity`.
+# MEDIDO que hace falta `android-native-activity`, y no `android-game-activity`.
 #
-# En el hilo de winit (v0.30) hay un reporte reproducible de Galaxy S23 con
-# Android 16: con `android-game-activity` el teclado blando abre y responde;
-# con `android-native-activity` "the software keyboard does not show at all".
-# GameActivity trae una jerarquia de vistas de Android, que es lo que el
-# InputMethodManager necesita para ensechar el teclado. El motor de render es
-# `vello_cpu` y no depende de la GPU, asi que lo demas no cambia.
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-game-activity"] }
+# Es lo que usa el ejemplo oficial de egui (`eframe/examples/hello_android`) y es
+# el unico camino con un `android_main` que se sabe que arranca. Con
+# `android-game-activity` el punto de entrada se busca por otro mecanismo y no hay
+# ejemplo equivalente.
+#
+# El teclado blando tiene un problema conocido con `native-activity` —no aparece en
+# Android moderno— y `game-activity` lo arregla. Se deja pendiente a proposito:
+# primero que la app abra, despues el teclado. Ver el comentario del modulo.
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
 egui = { workspace = true }
 log = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
-android-activity = { version = "0.6", default-features = false, features = ["game-activity"] }
+# `AndroidApp` viene de aqui, y es lo que `android_main` recibe.
+winit = { workspace = true }
+android-activity = { version = "0.6", default-features = false, features = ["native-activity"] }
+android_logger = { workspace = true }
 
 # Android carga este .so con `System.loadLibrary`, asi que tiene que ser cdylib.
+#
+# MEDIDO: si no hay ningun `#[no_mangle]` en el crate, el `.so` sale VACIO. El
+# enlazador borra todo lo que no sea alcanzable desde las exportaciones, y en Rust
+# lo unico que se exporta es lo marcado con `#[no_mangle]`. Se vio un `.so` de 5,8
+# MB con 566 KB de `.text` y **3 simbolos dinamicos** para 225.484 lineas de codigo.
 [lib]
 name = "vectorcraft_android"
 path = "src/lib.rs"

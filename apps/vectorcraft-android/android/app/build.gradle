@@ -60,17 +60,18 @@ android {
 dependencies {
     // MEDIDO que hace falta: `android-game-activity`, NO `native-activity`.
     //
-    // GameActivity da una jerarquia de vistas de Android real, que es lo que el
-    // InputMethodManager necesita para que aparezca el teclado blando. Con
-    // NativeActivity, en Android moderno (probado en Galaxy S23 / Android 16), el
-    // teclado no aparece en absoluto.
+    // MEDIDO que hace falta `native-activity` y NO `game-activity`: es lo que usa
+    // el ejemplo oficial de egui (`eframe/examples/hello_android`), y es el unico
+    // camino con un `android_main` que se sabe que arranca.
     //
-    // La diferencia NO es solo el teclado: GameActivity tambien trae un `SurfaceView`
-    // y un `Surface` de Android de verdad, que es lo que necesita egui-wgpu para
-    // presentar. NativeActivity obliga a pelearse con el buffer swapchain a mano.
+    // Se pierde el teclado blando: hay un reporte reproducible de winit de que con
+    // `NativeActivity` no aparece en Android moderno (Galaxy S23 / Android 16),
+    // porque el `InputMethodManager` lo hace a traves de una vista y `NativeActivity`
+    // no tiene ninguna. `GameActivity` si la trae, y con ella el teclado.
+    //
+    // Se acepta a proposito: primero que abra y se vea el editor entero. Cuando se
+    // quiera arreglar son tres cambios, anotados en `apps/vectorcraft-android/src/lib.rs`.
     implementation 'org.mozilla:android-activity:0.6.1'
-    // `androidx.games:games-activity` es lo que aporta la clase `GameActivity`.
-    implementation 'androidx.games:games-activity:3.0.5'
     implementation 'androidx.annotation:annotation:1.7.1'
 }
 
