@@ -59,7 +59,14 @@ pub const TABLE: &[(&str, Class)] = &[
     // only wraps the engine and the UI, with an `android_main` entry point instead
     // of a desktop one. It adds no crate below L6, and nothing may depend on it,
     // which is what the exempt class says.
-    ("vectorcraft-android", Class::Exempt),
+    //
+    // MEASURED: the key is `android`, not `vectorcraft-android`. `classify()` runs
+    // `short_name()`, which strips the `vectorcraft-` prefix, so a full package name
+    // here can never match and the crate stays unregistered:
+    //
+    //   - vectorcraft-android: unknown workspace crate; register it in
+    //     xtask/src/layers.rs TABLE (see plan/architecture.md §3)
+    ("android", Class::Exempt),
     // Crates added later (append-only).
     ("cad", Class::Layer(3)),
     ("eps", Class::Layer(3)),
