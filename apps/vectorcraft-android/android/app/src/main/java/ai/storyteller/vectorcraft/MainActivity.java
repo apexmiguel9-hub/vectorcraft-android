@@ -213,7 +213,7 @@ public class MainActivity extends NativeActivity {
         // primero en `getData()` y el resto en `getClipData()`. Sin esto solo se
         // abriria uno de los N.
         StringBuilder uris = new StringBuilder();
-        java.util.ArrayList<Uri> all = new ArrayList<>();
+        java.util.ArrayList<Uri> all = new java.util.ArrayList<>();
         ClipDataHolder holder = collect(data);
         if (holder != null) {
             for (int i = 0; i < holder.count; i++) {
@@ -364,22 +364,30 @@ public class MainActivity extends NativeActivity {
      * @return el nombre, o {@code null} si no se puede
      */
     private static String displayName(String uri) {
-        try {
-            String n = instance.getContentResolver()
-                    .query(Uri.parse(uri), new String[] { android.provider.OpenableColumns.DISPLAY_NAME },
-                            null, null, null)
-                    .let(c -> {
-                        try (android.database.Cursor cur = c) {
-                            if (cur != null && cur.moveToFirst()) {
-                                return cur.getString(0);
-                            }
-                        }
-                        return null;
-                    });
-            return n;
+        // MEDIDO: la primera version de esto estaba escrita con `.let(c -> …)`, que es
+        // Kotlin:
+        //
+        //     MainActivity.java:371: error: cannot find symbol
+        //         .let(c -> {
+        //                ^
+        //         symbol: method let((c)->{ try[...]ll; })
+        //
+        // Java no tiene `let`. Y no es un descuido de sintaxis: el fichero entero de
+        // esta clase esta en Java **a proposito** (ver el `why Java y no Kotlin` de
+        // arriba), asi que escribir Kotlin aqui habria sido el fallo de verdad.
+        //
+        // try-with-resources en vez de cerrar a mano, que es lo que hacia el `let`.
+        try (android.database.Cursor c = instance.getContentResolver()
+                .query(Uri.parse(uri),
+                        new String[] { android.provider.OpenableColumns.DISPLAY_NAME },
+                        null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                return c.getString(0);
+            }
         } catch (Exception e) {
-            return null;
+            android.util.Log.w(TAG, "sin nombre para " + uri + ": " + e);
         }
+        return null;
     }
 
     @Override
