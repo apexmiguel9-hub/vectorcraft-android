@@ -106,13 +106,138 @@ pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn e
 ///
 /// Pantalla completa y sin marco: un canvas vectorial quiere toda la pantalla, y los
 /// paneles van dentro de la UI en vez de en barras del sistema.
+/// La configuracion de wgpu que se usa en Android: **solo OpenGL ES**.
+///
+/// MEDIDO por que, y por que no es "Vulkan con menos cosas".
+///
+/// Vulkan en este movil esta **completo**, y conviene decirlo porque es lo que
+/// hace el crash desconcertante. Verificado con el perfil de Vulkan del
+/// `vp_gpuinfo` del Moto G56 5G (Android 16):
+///
+/// | | |
+/// |---|---|
+/// | `apiVersion` | **1.3.1023** (el informe de la base de datos lo da como 1.3.303) |
+/// | extensiones | **129**, de las que 61 son `VK_KHR` |
+/// | `VK_ANDROID_external_memory_android_hardware_buffer` | si |
+/// | `driverID` | `VK_DRIVER_ID_IMAGINATION_PROPRIETARY`, "PowerVR B-Series" 25.1 |
+/// | subgroup | 128, con todas las operaciones |
+///
+/// O sea: **no falta ninguna feature.** El problema es otro.
+///
+/// wgpu elige solo, y elige Vulkan, que en Android es el backend primario:
+///
+///     There are 2 available wgpu adapters: {backend: Vulkan, "PowerVR B-Series
+///     BXM-8-256"}, {backend: Gl, "PowerVR B-Series BXM-8-256"}
+///
+/// Y al crear el primer pipeline del editor el proceso muere. Los seis frames
+/// interiores del tombstone no son de Rust, son del driver:
+///
+///     #00 libc.so           (abort+156)
+///     #01-03 libufwriter.so  (BILParseStream+164)
+///     #04-06 vulkan.mtk.so   (FragmentShaderCompileState::CompileUF()+1272)
+///     #07 wgpu_hal::vulkan::device::Device::create_render_pipeline
+///     #14 egui_wgpu::renderer::Renderer::new
+///     #15 egui_wgpu::Painter::set_window
+///
+/// Leyendolo de abajo arriba: `egui_wgpu::Painter` pide su primer pipeline, `wgpu`
+/// lo pasa a Vulkan, y **`vulkan.mtk.so` aborta mientras compila el fragment
+/// shader** —`FragmentShaderCompileState::CompileUF`— dentro de `libufwriter.so`,
+/// que es el escritor de binarios del compilador propietario (`BIL` es su IR).
+///
+/// **El driver no loguea nada**: no hay mensaje de asercion en el logcat, solo el
+/// `abort()`. Esta compilado en release y el assert es un `abort()` a pelo. Por eso
+/// no se puede saber que construccion concreta del SPIR-V le molesta: no lo dice.
+///
+/// ## Lo que cuesta esta decision, que es cero aqui
+///
+/// VectorCraft **rasteriza en CPU**, con `vello_cpu`. La GPU no dibuja vectores:
+/// solo presenta los pixeles que la CPU ya ha pintado, a traves de egui. Toda la
+/// parte de Vulkan que de verdad importa —compute shaders, para rasterizar en GPU—
+/// es justo la que este proyecto no usa, y lo hizo a proposito para no depender del
+/// driver. aqui el coste de GL es cero.
+///
+/// ## Lo que se deja anotado
+///
+/// Si algun dia el driver de PowerVR deja de abortar, esto es **una linea**: quitar
+/// la funcion y dejar `renderer: eframe::Renderer::Wgpu`. Y si se quiere probar sin
+/// recompilar, el propio egui-wgpu tiene la variable de entorno:
+///
+///     WGPU_BACKEND=opengl
+///
+/// que se lee en `WgpuSetupCreateNew::without_display_handle()`, de donde sale el
+/// `WgpuConfiguration::default()`. Esta que se fija a mano, y no solo por la variable,
+/// para que no dependa de cuando se lea el entorno.
+fn wgpu_solo_opengl() -> eframe::egui_wgpu::WgpuConfiguration {
+    // `WgpuSetupCreateNew` no es `#[non_exhaustive]`, pero en vez de usar sintaxis de
+    // actualizacion se parte de su propio constructor y se cambia el campo. Es lo
+    // que menos puede romperse al actualizar egui: no depende de que campos existan
+    // los que no se nombran.
+    let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    setup.instance_descriptor.backends = eframe::egui_wgpu::wgpu::Backends::GL;
+    eframe::egui_wgpu::WgpuConfiguration {
+        wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(setup),
+        ..Default::default()
+    }
+}
+
 fn window_options() -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([360.0, 480.0])
             .with_fullscreen(true),
-        renderer: eframe::Renderer::Wgpu,
+        // MEDIDO: el render **no** es `eframe::Renderer::Wgpu` pelado, sino el mismo
+        // renderizador con el backend de **OpenGL ES** y solo ese.
+        //
+        // Con `Renderer::Wgpu`, egui-wgpu deja el backend a su cuenta:
+        //
+        //     backends: wgpu::Backends::from_env()
+        //         .unwrap_or(wgpu::Backends::PRIMARY | wgpu::Backends::GL),
+        //
+        // y en Android `PRIMARY` es Vulkan, que gana. O sea: el port iba a Vulkan.
+        //
+        // ## Por que Vulkan es un callejon en este movil
+        //
+        // MEDIDO, con la cadena de 35 frames del tombstone. wgpu encuentra los dos
+        // adaptadores y elige el de Vulkan:
+        //
+        //     There are 2 available wgpu adapters: {backend: Vulkan, ... "PowerVR
+        //     B-Series BXM-8-256"}, {backend: Gl, ...}
+        //
+        // y al crear el primer pipeline revienta. Los seis frames interiores no son
+        // de Rust, son del driver:
+        //
+        //     #00 libc.so              (abort+156)
+        //     #01-03 libufwriter.so     (BILParseStream+164)
+        //     #04-06 vulkan.mtk.so      (FragmentShaderCompileState::CompileUF()+1272)
+        //     #07 wgpu_hal::vulkan::device::Device::create_render_pipeline
+        //     #08 wgpu_hal::dynamic::device::vulkan::DynDevice::create_render_pipeline
+        //     #09 wgpu_core::device::resource::Device::create_render_pipeline_inner
+        //     #10 wgpu_core::device::resource::Device::create_render_pipeline
+        //     #11 wgpu_core::device::global::Global::device_create_general_render_pipeline
+        //     #12 wgpu_core::device::global::Global::device_create_render_pipeline
+        //     #13 wgpu_core::backend::wgpu_core::CoreDevice::<dispatch>::DeviceInterface::create_render_pipeline
+        //     #14 egui_wgpu::renderer::Renderer::new
+        //     #15 egui_wgpu::Painter::set_window
+        //     #16 eframe::native::wgpu_integration::WgpuWinitApp::resumed
+        //
+        // Se puede leer de abajo arriba y es inequivoco: `egui_wgpu::Painter` pide su
+        // primer pipeline, `wgpu` lo pasa a Vulkan, y **`vulkan.mtk.so` aborta
+        // mientras compila el fragment shader** —`FragmentShaderCompileState::CompileUF`—
+        // dentro de `libufwriter.so`, que es el escritor de binarios del compilador
+        // propietario. `abort()` en `libc`, no un panic.
+        //
+        // Eso explica por que el hook de panics no decia nada: **no hay ningun panic
+        // de Rust**. El proceso lo mata el driver del sistema.
+        //
+        // ## Lo que se hace
+        //
+        // Quedarse **solo con OpenGL ES**, que el mismo logCat dice que tambien esta
+        // disponible y que es el camino que si funciona en estos PowerVR sobre Android:
+        // el motor de VectorCraft rasteriza en CPU con `vello_cpu`, asi que la GPU
+        // solo presenta pixeles y no tiene nada que hacer con esto. Passarse por
+        // OpenGL no cuesta nada al dibujo.
+        renderer: eframe::Renderer::Wgpu { wgpu_configuration: wgpu_solo_opengl() },
         ..Default::default()
     }
 }
