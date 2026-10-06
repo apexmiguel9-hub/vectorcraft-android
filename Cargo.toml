@@ -11,6 +11,12 @@ rust-version = "1.95"
 repository = "https://github.com/storytold/vectorcraft"
 
 [workspace.dependencies]
+# Del port de Android: manda el log de Rust al logcat. Sin esto, `log::info!` del
+# motor no aparece en ningun sitio y no hay ni un dato de lo que hace la libreria
+# en el movil.
+android_logger = "0.14"
+# `AndroidApp`, que es lo que recibe `android_main`.
+winit = "0.30"
 # internal
 vectorcraft-geom = { path = "crates/geom" }
 vectorcraft-color = { path = "crates/color" }
