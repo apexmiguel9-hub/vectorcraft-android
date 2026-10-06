@@ -138,10 +138,34 @@ pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidA
     // no hay ni un solo dato de lo que hace la libreria en el movil.
     android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info));
 
+    // MEDIDO que hace falta, y de paso una leccion del otro repo: **en Android, un
+    // panic de Rust es invisible.** El gancho por defecto escribe en `stderr`, y
+    // `stderr` no llega a logcat si el proceso no tiene stdout asociado. Ya se ha
+    // visto ahi: un `eprintln!` en un bucle de diez mil llamadas no aparecio ni una
+    // vez.
+    //
+    // Aqui el sintoma es peor: el proceso muere con
+    //
+    //     Fatal signal 6 (SIGABRT) ... in tid ... (android_main)
+    //
+    // y el backtrace acaba en `android_main+320` — dentro de la funcion, sin decir
+    // que linea. Se sabe que se ha panicado y no se sabe por que.
+    //
+    // Este hook manda el panic al logcat, que si llega, y de ahi se ve el mensaje
+    // entero con su fichero y su linea.
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("PANIC de Rust: {info}");
+        // Y tambien a `stderr`, que en un debugger o en un `adb logcat` con el
+        // proceso asociado si aparece, y no cuesta nada.
+        eprintln!("PANIC de Rust: {info}");
+    }));
+
     // El `AndroidApp` va DENTRO de las opciones, no como argumento aparte: es lo que
     // el `EventLoop` de winit necesita para construirse, y sin el se queda sin
     // bucle de eventos.
     let options = eframe::NativeOptions { android_app: Some(app), ..window_options() };
+
+    log::info!("vectorcraft-android: arrancando, version {}", env!("CARGO_PKG_VERSION"));
 
     let resultado = eframe::run_native("VectorCraft", options, Box::new(|cc| build(cc).map_err(|e| e.into())));
 
