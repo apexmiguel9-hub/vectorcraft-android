@@ -147,6 +147,17 @@ pub extern "system" fn Java_ai_storyteller_vectorcraft_MainActivity_nativeListo<
     log::info!("saf: clase de Java recibida: {}", CLASE_JAVA.load(Ordering::Acquire) != std::ptr::null_mut());
 }
 
+/// MEDIDO: comparativa. `nativeListo` es `extern "system"` con tipos; esta es
+/// `extern "C"` con punteros, como `nativeOnFilePicked`. Si una resuelve y la otra no,
+/// el problema es la firma y no las nativas de esta clase en general.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_ai_storyteller_vectorcraft_MainActivity_nativaDeEstiloViejo(
+    env: *mut c_void,
+    clase: *mut c_void,
+) {
+    log::info!("saf: nativaDeEstiloViejo llamada, env={} clase={}", env != std::ptr::null_mut(), clase != std::ptr::null_mut());
+}
+
 /// Java -> Rust: el selector ha terminado.
 ///
 /// Se llama en el hilo de la UI de Android, desde `onActivityResult`. Solo despierta;

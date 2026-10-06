@@ -137,6 +137,13 @@ public class MainActivity extends NativeActivity {
      */
     private static native void nativeListo();
 
+    /**
+     * MEDIDO: una segunda nativa, con el estilo viejo (`extern "C"` y punteros crudos,
+     * como `nativeOnFilePicked`), para separar "las nativas de esta clase no resuelven"
+     * de "esta en concreto no resuelve".
+     */
+    private static native void nativaDeEstiloViejo();
+
     /** Guarda el resultado y despierta a Rust, que esta esperando. */
     private static void publicar(String uri) {
         lastResult = uri;
@@ -415,9 +422,28 @@ public class MainActivity extends NativeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
-        // Que Rust tenga la clase de Java desde el primer momento: sin ella, SAF no
-        // puede ni arrancar el selector.
-        nativeListo();
+        // MEDIDO: esto es una PRUEBA, no el sitio final.
+        //
+        // En `onCreate` falla con
+        //
+        //     java.lang.UnsatisfiedLinkError: No implementation found for void
+        //     ai.storyteller.vectorcraft.MainActivity.nativeListo()
+        //     (tried Java_…_nativeListo and Java_…_nativeListo__)
+        //
+        // con la libreria **cargada** —MEDIDO: en el mismo lanzamiento, Rust corre y
+        // registra `saf: JavaVM registrado`, pero en el hilo nativo 8315, mientras el
+        // crash es en el hilo principal 8297— y el simbolo esta en `.dynsym` como
+        // `FUNC GLOBAL DEFAULT` (MEDIDO con `llvm-readelf --dyn-syms` sobre la `.so`
+        // **sacada del movil**). O sea: simbolo ahi, libreria cargada, y `dlsym`
+        // devuelve null. Sin explicacion todavia.
+        //
+        // Se intenta en los dos sitios y con `try/catch`, para (a) que la app no muera
+        // por esto, y (b) medir cual de los dos funciona:
+        //
+        // * `onCreate`, por el hilo principal de Java, lo antes posible.
+        // * `onWindowFocusChanged(true)`, cuando la ventana ya esta y la libreria
+        //   cargada de seguro.
+        probar("onCreate");
 
         // ------------------------------------------------------------------
         // Que la ventana respete las barras del sistema.
@@ -483,6 +509,30 @@ public class MainActivity extends NativeActivity {
                     + " | density=" + d);
             return insets;
         });
+    }
+
+    /** MEDIDO: la medicion de que llamada nativa resuelve y cual no. */
+    private static void probar(String donde) {
+        try {
+            nativaDeEstiloViejo();
+            android.util.Log.i(TAG, "nativaDeEstiloViejo desde " + donde + ": RESUELTA");
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "nativaDeEstiloViejo desde " + donde + ": " + t);
+        }
+        try {
+            nativeListo();
+            android.util.Log.i(TAG, "nativeListo desde " + donde + ": RESUELTA");
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "nativeListo desde " + donde + ": " + t);
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean tieneFoco) {
+        super.onWindowFocusChanged(tieneFoco);
+        if (tieneFoco) {
+            probar("onWindowFocusChanged");
+        }
     }
 
     @Override
