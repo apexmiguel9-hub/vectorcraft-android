@@ -54,5 +54,77 @@ public class MainActivity extends NativeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // ------------------------------------------------------------------
+        // Que la ventana respete las barras del sistema.
+        //
+        // MEDIDO, con `dumpsys window` y con el log del dialogo, en el
+        // moto g56 5G (2400x1080, densidad 2.4375):
+        //
+        //     InsetsSource type=statusBars      frame=[0,0][2400,59]
+        //     InsetsSource type=navigationBars  frame=[2283,0][2400,1080]
+        //     InsetsSource type=displayCutout   frame=[0,0][115,1080]
+        //
+        //     dialog newDocument: viewport [[0.0 0.0] - [937.4 443.1]]
+        //                         ventana  [[12.3 -13.5] - [925.3 443.0]]
+        //
+        // La ventana del proceso mide 2286 de ancho —que es 2400 menos los 115 del
+        // notch, o sea que **si** lo respeta— y **1080 de alto enteros, que es la
+        // pantalla completa con los 59 de la barra de estado dentro**. De ahi el
+        // `y = -13.5`: el borde superior del dialogo cae bajo la barra de
+        // notificaciones, y las pestañas de plantillas (Mobile, Web, Print...)
+        // quedan pegadas al reloj.
+        //
+        // Y el ancho util no son 937 puntos sino `937 - 115/2.4375 - 117/2.4375 =
+        // 842`, que es por lo que el dialogo, que pedia 913, se salia por la derecha.
+        //
+        // MEDIDO tambien: winit 0.30 **no rellena `safe_area_insets` en Android**.
+        // Solo lo hace en iOS:
+        //
+        //     $ grep -rl safe_area winit-0.30.13/src/
+        //     winit-0.30.13/src/platform_impl/ios/app_state.rs
+        //     winit-0.30.13/src/platform_impl/ios/window.rs
+        //
+        // Asi que `egui` recibe ceros y no puede reservar nada por su cuenta. La
+        // ventana tiene que estar bien colocada antes.
+        //
+        // Comprobado tambien que `android-activity` **no** pone este flag al
+        // arrancar: `LAYOUT_NO_LIMITS` solo aparece como constante y en el metodo
+        // `AndroidApp::set_window_flags`, que nadie llama. Se quita igual, porque
+        // ponerlo es idempotente y deja constancia de la intencion.
+        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+
+        // API 30+: sustituye a `FLAG_LAYOUT_NO_LIMITS` su equivalente moderno. Con
+        // `minSdk 24` hace falta el guard: `setDecorFitsSystemWindows` no existe
+        // antes.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(true);
+        }
+
+        // Y que el propio sistema diga cuales son, por logcat. Es la unica forma de
+        // saber si lo de arriba ha funcionado sin adivinar: si el viewport que ve
+        // egui sigue siendo 1080 de alto, aqui saldra un aviso.
+        getWindow().getDecorView().setOnApplyWindowInsetsListener((v, insets) -> {
+            int l, t, r, b;
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                android.graphics.Insets bars =
+                        insets.getInsets(android.view.WindowInsets.Type.systemBars()
+                                | android.view.WindowInsets.Type.displayCutout());
+                l = bars.left;
+                t = bars.top;
+                r = bars.right;
+                b = bars.bottom;
+            } else {
+                l = insets.getSystemWindowInsetLeft();
+                t = insets.getSystemWindowInsetTop();
+                r = insets.getSystemWindowInsetRight();
+                b = insets.getSystemWindowInsetBottom();
+            }
+            float d = getResources().getDisplayMetrics().density;
+            android.util.Log.i("VCInsets", "insets px l=" + l + " t=" + t + " r=" + r + " b=" + b
+                    + " | puntos l=" + (l / d) + " t=" + (t / d) + " r=" + (r / d) + " b=" + (b / d)
+                    + " | density=" + d);
+            return insets;
+        });
     }
 }
