@@ -319,3 +319,5 @@ Generated-in-code art is original and has no file to list. This covers the defau
 | `examples/neon-drive.vectorcraft` | VectorCraft contributors | Original artwork built through the VectorCraft command API | MIT OR Apache-2.0 |  |
 | `examples/ribbons.vectorcraft` | VectorCraft contributors | Original artwork built through the VectorCraft command API | MIT OR Apache-2.0 |  |
 | `examples/feature-sheet.vectorcraft` | VectorCraft contributors | Original artwork built through the VectorCraft command API | MIT OR Apache-2.0 |  |
+
+| `apps/vectorcraft-android/android/app/src/main/res/drawable/ic_launcher.xml` | apexmiguel9-hub | original (vector dibujado a mano en XML) | n/a | Icono del launcher del port de Android: un nodo de Bezier con sus dos tiradores, que es de que va el editor. Es un vector y no un PNG a proposito: cabe en 400 bytes, escala a cualquier densidad y su procedencia no da lugar a dudas. |

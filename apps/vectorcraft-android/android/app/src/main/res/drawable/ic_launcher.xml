@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Icono de VectorCraft: un nodo con dos tiradores de Bezier, que es literalmente
+    de que va el editor.
+
+    MEDIDO que hace falta, y el sintoma es poco claro:
+
+        ERROR: AndroidManifest.xml:11:5-43:19: AAPT: error:
+        resource mipmap/ic_launcher (aka ai.storyteller.vectorcraft:mipmap/ic_launcher)
+        not found
+
+    El manifiesto declaraba `android:icon="@mipmap/ic_launcher"` y no habia ninguna
+    carpeta `mipmap-*`. El error es de `aapt`, no dice "falta el icono", y el paso
+    que falla es `processDebugResources`, que no toca Kotlin ni Rust.
+
+    Es un vector y no un PNG por dos razones. La primera es que el proyecto exige que
+    todo lo que se anada tenga procedencia clara (`AGENTS.md`), y un XML escrito aqui
+    es obra original sin discusion. La segunda es que un icono de launcher son unos
+    pocos kilobytes, y un vector son 400 bytes y escala a cualquier densidad.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Fondo -->
+    <path
+        android:fillColor="#1C1C1C"
+        android:pathData="M0,0h108v108h-108z" />
+
+    <!-- Un nodo de Bezier y su curva: dos tiradores y el trazo -->
+    <path
+        android:strokeColor="#E8E8E8"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M32,74 C32,44 76,44 76,74" />
+
+    <!-- El nodo -->
+    <path
+        android:fillColor="#E8E8E8"
+        android:pathData="M50,66m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+
+    <!-- Los dos tiradores -->
+    <path
+        android:fillColor="#4A9EE8"
+        android:pathData="M32,74m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0" />
+    <path
+        android:fillColor="#4A9EE8"
+        android:pathData="M76,74m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0" />
+</vector>
