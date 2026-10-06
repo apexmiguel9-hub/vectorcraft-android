@@ -122,9 +122,16 @@ tasks.register('cargoBuild', Exec) {
     // `cargo ndk` necesita esto para saber que NDK usar.
     environment 'ANDROID_NDK_HOME', System.getenv('ANDROID_NDK_HOME') ?: "${System.getenv('ANDROID_SDK_ROOT') ?: ''}/ndk/26.1.10909125"
 
-    // En local, esto imprime cientos de lineas de compilacion de Rust. A menos que
-    // se pida, se calla: lo que importa es si pasa o falla.
-    standardOutput = System.getenv('VERBOSE') ? System.out : new org.apache.tools.ant.util.OutputStreamLog()
+    // MEDIDO: aqui habia `new org.apache.tools.ant.util.OutputStreamLog()` para
+    // callar la salida de cargo. Gradle 9 no expone esa clase y el fichero entero
+    // deja de compilar:
+    //
+    //     unable to resolve class org.apache.tools.ant.util.OutputStreamLog
+    //       @ line 127, column 62
+    //
+    // Es una clase interna de Ant, nunca fue API. Se quita: en CI ya se filtra la
+    // salida con `grep -v Compiling` en el paso equivalente, y en local interesa
+    // ver lo que pasa.
 }
 
 tasks.register('cargoJniLibs', Copy) {
