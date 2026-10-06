@@ -66,7 +66,6 @@ android {
         }
     }
     }
-}
 
 dependencies {
     // MEDIDO: aqui NO va ninguna dependencia de `android-activity`, y esa es la
