@@ -175,7 +175,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
             &clase,
             jni::jni_str!("request"),
             jni::jni_sig!("(ILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;"),
-            &[jni::JValue::Int(mode), jni::JValue::Object(jt), jni::JValue::Object(jm)],
+            &[jni::JValue::Int(mode), jni::JValue::Object(&jt), jni::JValue::Object(&jm)],
         )?;
         // `request` devuelve `null` si arranco bien, o el motivo del fallo.
         let texto: String = match v {
@@ -186,7 +186,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
             _ => String::new(),
         };
         Ok(Ok(if texto.is_empty() { None } else { Some(texto) }))
-    })??;
+    })?;
 
     // Y ahora esperar. Java despierta por `nativeOnFilePicked`.
     match RESUELTO.lock() {
@@ -221,7 +221,7 @@ fn pedir(mode: jint, titulo: &str, mimes: &str) -> Result<Option<String>, String
             }
             _ => String::new(),
         }))
-    })??;
+    })?;
 
     if uri.is_empty() {
         log::info!("saf: cancelado");
@@ -281,7 +281,7 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
             &clase,
             jni::jni_str!("readBase64"),
             jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
-            &[jni::JValue::Object(ju)],
+            &[jni::JValue::Object(&ju)],
         )?;
         Ok(Ok(match v {
             jni::JValueOwned::Object(o) => {
@@ -291,7 +291,7 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
             }
             _ => String::new(),
         }))
-    })??;
+    })?;
 
     if let Some(x) = env(|e| Ok(excepcion(e))) {
         return Err(x);
@@ -315,10 +315,10 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
             &clase,
             jni::jni_str!("writeBase64"),
             jni::jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
-            &[jni::JValue::Object(ju), jni::JValue::Object(jd)],
+            &[jni::JValue::Object(&ju), jni::JValue::Object(&jd)],
         )?;
         Ok(Ok(()))
-    })??;
+    })?;
 
     if let Some(x) = env(|e| Ok(excepcion(e))) {
         return Err(x);
@@ -342,7 +342,7 @@ pub fn nombre(uri: &str) -> Option<String> {
             &clase,
             jni::jni_str!("displayName"),
             jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
-            &[jni::JValue::Object(ju)],
+            &[jni::JValue::Object(&ju)],
         )?;
         Ok(Ok(match v {
             jni::JValueOwned::Object(o) => {
