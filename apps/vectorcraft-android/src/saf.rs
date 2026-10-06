@@ -309,7 +309,11 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
         Ok(Ok(texto(e, v)?))
     })?;
 
-    if let Some(x) = env(|e| Ok(excepcion(e))) {
+    // MEDIDO: el `?` no es opcional. `env` devuelve
+    // `Result<Option<String>, String>` —porque `excepcion` devuelve `Option`— y sin
+    // aplanarlo, `if let Some(..)` se esta aplicando a un `Result` y el error es
+    // `expected Result<_, String>, found Option<String>`, que no señala el sitio.
+    if let Some(x) = env(|e| Ok(excepcion(e)))? {
         return Err(x);
     }
     let bytes = vectorcraft_format::base64_decode(&b64).ok_or("el contenido leido no es base64 valido")?;
@@ -336,7 +340,11 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
         Ok(Ok(()))
     })?;
 
-    if let Some(x) = env(|e| Ok(excepcion(e))) {
+    // MEDIDO: el `?` no es opcional. `env` devuelve
+    // `Result<Option<String>, String>` —porque `excepcion` devuelve `Option`— y sin
+    // aplanarlo, `if let Some(..)` se esta aplicando a un `Result` y el error es
+    // `expected Result<_, String>, found Option<String>`, que no señala el sitio.
+    if let Some(x) = env(|e| Ok(excepcion(e)))? {
         return Err(x);
     }
     log::info!("saf: escritos {} bytes en {uri} en {:?}", bytes.len(), t0.elapsed());
