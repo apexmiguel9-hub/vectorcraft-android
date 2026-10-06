@@ -86,12 +86,18 @@ jobs:
           restore-keys: gradle-
 
       - name: Instalar el NDK
-        # La version tiene que coincidir con `ndkVersion` de app/build.gradle. Si
-        # no coinciden, el link falla con simbolos raros, y el error no dice "NDK".
+        # MEDIDO que hace falta este paso: en ubuntu-22.04, `sdkmanager` NO esta en el
+        # PATH y sale un exit 127 que no dice nada de NDK. Este lo pone.
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar el NDK
+        # La version tiene que coincidir con `ndkVersion` de app/build.gradle. Si no
+        # coinciden, el link falla con simbolos raros, y el error no menciona NDK.
         run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager "ndk;26.1.10909125"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> "$GITHUB_OUTPUT"
+          echo "NDK_DIR=$ANDROID_SDK_ROOT/ndk/26.1.10909125" >> $GITHUB_ENV
+          ls -d "$ANDROID_SDK_ROOT/ndk/26.1.10909125"
 
       - name: Compilar la libreria nativa
         # MEDIDO que hace falta `--locked`: sin el, cargo puede resolver versiones
@@ -148,7 +154,7 @@ jobs:
       - name: Construir con Gradle
         working-directory: apps/vectorcraft-android/android
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          ANDROID_NDK_HOME: ${{ env.NDK_DIR }}
         run: |
           gradle --no-daemon assembleDebug
 
