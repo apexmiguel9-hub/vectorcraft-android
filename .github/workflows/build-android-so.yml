@@ -223,6 +223,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.SO_ARTIFACT }}
-          path: target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          # MEDIDO: la ruta va LITERAL. `$ANDROID_TARGET` no se expande aqui, porque
+          # `path:` no lo evalua el shell sino la propia accion, y sale:
+          #
+          #   No files were found with the provided path:
+          #   target/$ANDROID_TARGET/debug/libvectorcraft_android.so
+          #
+          # que ademas es el peor mensaje posible: dice que no hay ficheros cuando
+          # la `.so` pesa 79 MB y esta ahi al lado. Se compila bien, se comprueba
+          # bien, y falla al publicar.
+          path: target/aarch64-linux-android/debug/libvectorcraft_android.so
           if-no-files-found: error
           retention-days: 30
