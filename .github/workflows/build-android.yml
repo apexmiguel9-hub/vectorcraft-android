@@ -85,9 +85,23 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle') }}
           restore-keys: gradle-
 
-      - name: Instalar el NDK
-        # MEDIDO que hace falta este paso: en ubuntu-22.04, `sdkmanager` NO esta en el
-        # PATH y sale un exit 127 que no dice nada de NDK. Este lo pone.
+      - name: JDK 17
+        # MEDIDO que hace falta, y el orden importa: en `ubuntu-22.04` el JDK por
+        # defecto es el 11, y `sdkmanager` se niega a arrancar:
+        #
+        #   This tool requires JDK 17 or later. Your version was detected as 11.0.32.1.
+        #
+        # El plugin de Android (AGP 8.5) tambien pide 17, así que el paso hace falta
+        # para las dos cosas. Y tiene que ir ANTES que `setup-android`, porque es el
+        # propio `sdkmanager` el que comprueba la versión al arrancar.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Poner el SDK de Android en el PATH
+        # MEDIDO: sin este paso, `sdkmanager` da exit 127 y el error no menciona ni
+        # el NDK ni el SDK.
         uses: android-actions/setup-android@v3
 
       - name: Instalar el NDK
