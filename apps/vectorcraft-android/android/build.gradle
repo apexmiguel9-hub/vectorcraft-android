@@ -18,12 +18,23 @@ buildscript {
     }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+// MEDIDO: aqui NO va un bloque `allprojects { repositories { ... } }`.
+//
+// `settings.gradle` declara:
+//
+//     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+//
+// que dice "los repositorios se declaran aqui y en ningun otro sitio". Si tambien
+// se declaran en un `build.gradle`, Gradle aborta al evaluar el proyecto:
+//
+//     Build was configured to prefer settings repositories over project
+//     repositories but repository 'Google' was added by build file 'build.gradle'
+//
+// El error aparece en el paso que genera el wrapper, no en el de construir, porque
+// `gradle wrapper` tambien evalua el build. Asi que el sintoma apunta al paso
+// equivocado otra vez.
+//
+// Los repositorios estan todos en `settings.gradle`: google() y mavenCentral().
 
 tasks.register('clean', Delete) {
     delete rootProject.layout.buildDirectory
