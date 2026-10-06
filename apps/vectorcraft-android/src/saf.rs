@@ -296,6 +296,9 @@ fn mimes(filtros: &[(&'static str, &'static [&'static str])]) -> String {
 pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
     let t0 = Instant::now();
     let uri = uri.to_string();
+    // MEDIDO: el `move` de abajo se lleva `uri`, y el `log` de despues la quiere.
+    // Sale `borrow of moved value: uri`. Una copia para el log y listo.
+    let etiqueta = uri.clone();
     let b64 = env(move |e| {
         let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
         let u = e.new_string(&uri)?;
@@ -323,7 +326,7 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
         return Err(x);
     }
     let bytes = vectorcraft_format::base64_decode(&b64).ok_or("el contenido leido no es base64 valido")?;
-    log::info!("saf: leidos {} bytes de {uri} en {:?}", bytes.len(), t0.elapsed());
+    log::info!("saf: leidos {} bytes de {etiqueta} en {:?}", bytes.len(), t0.elapsed());
     Ok(bytes)
 }
 
@@ -331,6 +334,7 @@ pub fn leer(uri: &str) -> Result<Vec<u8>, String> {
 pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
     let t0 = Instant::now();
     let uri = uri.to_string();
+    let etiqueta = uri.clone();
     let b64 = vectorcraft_format::base64_encode(bytes);
     env(move |e| {
         let clase = e.find_class(jni::jni_str!("ai/storyteller/vectorcraft/MainActivity"))?;
@@ -353,7 +357,7 @@ pub fn escribir(uri: &str, bytes: &[u8]) -> Result<(), String> {
     if let Some(x) = env(|e| Ok(Ok(excepcion(e))))? {
         return Err(x);
     }
-    log::info!("saf: escritos {} bytes en {uri} en {:?}", bytes.len(), t0.elapsed());
+    log::info!("saf: escritos {} bytes en {etiqueta} en {:?}", bytes.len(), t0.elapsed());
     Ok(())
 }
 
