@@ -64,6 +64,14 @@
 //! `Cargo.toml`, el `android-activity` con `features = ["game-activity"]`, y el
 //! `MainActivity` que herede de `GameActivity` en vez de `NativeActivity`.
 //!
+//! ## El browser de ficheros
+//!
+//! Lo dibujamos nosotros con `egui_file`, dentro de la UI, y no con SAF. No es
+//! capricho: **abrir una segunda Activity da ANR en este port**, porque
+//! `android-activity` bloquea el hilo principal de Java hasta que el hilo del bucle
+//! confirma la pausa, y ese hilo es el que corre el update de egui. La traza entera
+//! esta en el modulo [`browser`].
+//!
 //! ## Insets
 //!
 //! `egui::InputState::safe_area_insets()` cubre status bar, barra de navegacion y
@@ -75,7 +83,9 @@ use vectorcraft_engine::Session;
 use vectorcraft_ui_egui::{Services, VectorcraftApp};
 
 #[cfg(target_os = "android")]
-mod saf;
+mod browser;
+#[cfg(target_os = "android")]
+mod permiso;
 
 /// El `eframe::App` del port. Tres reenvios, porque todo el editor —50k lineas de
 /// UI, 52 paneles, menus, canvas, atajos— ya vive en `VectorcraftApp`.
@@ -83,6 +93,12 @@ pub struct App(pub VectorcraftApp);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // MEDIDO, y el orden importa: el browser va **antes** que el editor. Si acaba de
+        // recoger un fichero, lo vuelca en el inbox aqui y `drain_inbox`
+        // (`crates/ui-egui/src/lib.rs:676`) lo abre en este mismo frame. Al reves habia
+        // un frame de retraso, que en un movil de 120 fps se ve.
+        #[cfg(target_os = "android")]
+        browser::logic(ctx);
         self.0.logic(ctx);
     }
 
@@ -92,6 +108,11 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        // MEDIDO: el aviso de permiso se pinta encima del todo de la UI del editor, que
+        // es donde el usuario mira. Solo sale si falta el permiso y el usuario no ha
+        // dicho que no, porque **se puede saltar sin romper nada**.
+        #[cfg(target_os = "android")]
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| browser::aviso(ui));
     }
 }
 
@@ -103,7 +124,7 @@ impl eframe::App for App {
 /// la build web.
 pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn eframe::App>, String> {
     #[cfg(target_os = "android")]
-    let services = saf::services();
+    let services = browser::services();
     #[cfg(not(target_os = "android"))]
     let services = Services::default();
 
@@ -334,11 +355,11 @@ pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidA
         eprintln!("PANIC de Rust: {info}");
     }));
 
-    // MEDIDO: SAF necesita el `JavaVM`, y `android-activity` solo lo expone a traves
-    // del `AndroidApp`. Se registra aqui, antes de construir las opciones, porque
-    // `Services::read`/`write` lo consultan en cuanto el usuario abre un fichero.
+    // MEDIDO: el permiso de almacenamiento necesita el `JavaVM`, y `android-activity`
+    // solo lo expone a traves del `AndroidApp`. Se registra aqui, antes de construir las
+    // opciones, porque `Services` lo consulta en cuanto el usuario abre un fichero.
     #[cfg(target_os = "android")]
-    saf::registrar(&app);
+    permiso::registrar(&app);
 
     // El `AndroidApp` va DENTRO de las opciones, no como argumento aparte: es lo que
     // el `EventLoop` de winit necesita para construirse, y sin el se queda sin

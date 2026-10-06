@@ -42,12 +42,6 @@ vectorcraft-render = { workspace = true }
 # Android moderno— y `game-activity` lo arregla. Se deja pendiente a proposito:
 # primero que la app abra, despues el teclado. Ver el comentario del modulo.
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-native-activity"] }
-
-
-# MEDIDO: para mover bytes entre Rust y el `ContentResolver` en base64, con las
-# mismas funciones que usa el motor para sus parametros (`{name, dataBase64}`), de
-# modo que el formato es el del proyecto y no uno inventado aqui.
-vectorcraft-format = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
 
@@ -69,6 +63,35 @@ jni = "0.22"
 winit = { workspace = true }
 android-activity = { version = "0.6", default-features = false, features = ["native-activity"] }
 android_logger = { workspace = true }
+
+# El browser de ficheros, dibujado DENTRO de la app.
+#
+# MEDIDO, y por que esto sustituye a SAF entero:
+#
+# * MEDIDO que abrir una segunda Activity da ANR en este port. No es SAF: es el
+#   handshake de `android-activity`, que bloquea el hilo principal de Java hasta que el
+#   hilo del bucle confirma el estado. Traza del ANR, textual:
+#
+#       "main" prio=5 tid=1 Native
+#         native: #01 <std::sys::sync::condvar::futex::Condvar>::wait+112
+#         native: #02 <WaitableNativeActivityState>::set_activity_state+160
+#         native: #05 android_activity::activity_impl::glue::on_pause+20
+#         native: #08 android.app.NativeActivity.onPause+16
+#
+#   O sea: cualquier selector del sistema abre una Activity, pausa la nuestra y
+#   deadlock. Uno propio, dibujado en egui, no abre nada.
+#
+# * MEDIDO que este crate no trae nada de Android: `grep -rniE 'android|jni|SAF' src/`
+#   no devuelve ni una linea. Es egui puro con el sistema de ficheros enchufable, y el
+#   que trae por defecto ya es `std::fs` (`src/lib.rs:231`, `fs: Box::new(Fs {})`).
+#   O sea: no hay que escribir ni un `Vfs`.
+#
+# * MEDIDO que encaja con nuestras versiones: pide `egui ^0.36`, que es la que tenemos.
+#   Una sola dependencia (`dyn-clone`), licencia MIT.
+#
+# * Immediate mode: `Dialog::show(ctx)` se llama cada frame y el estado se consulta con
+#   `state()`. **No hay ninguna espera**, ni condvar ni hilo bloqueado.
+egui_file = "0.28"
 
 # Android carga este .so con `System.loadLibrary`, asi que tiene que ser cdylib.
 #

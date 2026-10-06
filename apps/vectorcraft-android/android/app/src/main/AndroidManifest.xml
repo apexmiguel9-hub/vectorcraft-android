@@ -8,6 +8,29 @@
 
     <!-- Sin `android:largeHeap`: el motor es vello_cpu, y los pixeles van en
          texturas de egui, no en el heap de Java. -->
+    <!-- MEDIDO, y es lo que hace que el browser pueda abrir ficheros de verdad.
+
+         "Acceso a todos los archivos" es un appop, no un permiso normal, asi que no
+         se concede con un dialogo: hay que enviar al usuario a
+         Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION y el usuario lo
+         activa a mano.
+
+         Sin esto, y con targetSdk 34, el almacenamiento con alcance esta activo: se
+         pueden ver los NOMBRES de las carpetas de primer nivel del almacenamiento
+         compartido, pero no su contenido. Medido en el propio movil:
+
+             $ adb shell run-as ai.storyteller.vectorcraft ls /sdcard
+             ls: /sdcard: Permission denied
+
+         Y medido tambien el otro lado: la app de ArmourPaint con este permiso
+         concedido lista DCIM, Download, Pictures… y entra en ellos; sin el, el mismo
+         browser muestra la rejilla VACIA en /Download. Ver el modulo `browser`.
+
+         Bajar el minSdk no evita nada de esto: lo decide el targetSdk, no la version
+         del telefono, asi que hace falta en Android 11, 12, 13, 14, 15 y 16 igual. En
+         los Android 7 a 10 que cubre `minSdk 24` no se pide y no hace falta. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
