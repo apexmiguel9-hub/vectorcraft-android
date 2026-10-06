@@ -55,6 +55,11 @@ pub const TABLE: &[(&str, Class)] = &[
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
+    // The Android port. Same shape as `vectorcraft` and `web`: an app binary that
+    // only wraps the engine and the UI, with an `android_main` entry point instead
+    // of a desktop one. It adds no crate below L6, and nothing may depend on it,
+    // which is what the exempt class says.
+    ("vectorcraft-android", Class::Exempt),
     // Crates added later (append-only).
     ("cad", Class::Layer(3)),
     ("eps", Class::Layer(3)),
