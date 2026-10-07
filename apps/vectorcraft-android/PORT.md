@@ -3,19 +3,19 @@
 Qué se creó, qué se tocó y por qué, con las líneas exactas. Para dos cosas:
 
 1. **Portear el resto de apps** (`photocraft`, `printcraft`, …) con el mismo mapa.
-2. **Quien haga un fork** sepa qué hay que deshacer y dónde, sin leer 72 commits.
+2. **Quien haga un fork** sepa qué hay que deshacer y dónde, sin leer 84 commits.
 
 Todo lo que hay aquí está **medido en el móvil**, no deducido. Las medidas van en el propio
 sitio donde importan, con la salida del comando que las produjo.
 
-- **Base:** `5a93e78` (merge-base con `upstream/main`)
-- **Commits:** 72
-- **Upstream por detrás:** 97 commits
-- **Motor y UI compartidos:** 5 ficheros, **194 líneas añadidas, 17 borradas**
+- **Base:** `f9209e8` (merge-base con `upstream/main`); la fusión es `3a769da`, que se llevó los 188 commits de golpe (antes era `5a93e78`, 97 commits atrás)
+- **Commits:** 84
+- **Upstream por detrás:** 6 commits (un panel de Capas nuevo)
+- **Motor y UI compartidos:** 6 ficheros, **290 líneas añadidas, 18 borradas**
 
 ---
 
-## 1. Los 5 ficheros de `crates/` que se tocaron
+## 1. Los 6 ficheros de `crates/` que se tocaron
 
 Son los únicos que se comparten con el escritorio y la web, así que son los únicos que
 tocan el upstream. Todos son aditivos o de recorte, ninguno cambia comportamiento en
@@ -23,6 +23,7 @@ escritorio.
 
 | Fichero | +/- | Qué hace | Por qué |
 |---|---:|---|---|
+| `crates/ui-egui/src/canvas.rs` | +96 −1 | Arbitraje de gestos y el log `gesto:` de medición | En escritorio el ratón y los gestos nunca se mezclan. En un táctil, **un dedo es la herramienta y dos son el desplazamiento**, y eso hay que decidirlo en un sitio. El log es temporal: mide por qué el pan de dos dedos no llega. |
 | `crates/ui-egui/src/lib.rs` | +5 −0 | Añade `Services::save_async` | La costura que faltaba para guardar en un host immediate-mode. Calcada de `open_async`, que ya existía para la web. |
 | `crates/ui-egui/src/io.rs` | +8 −0 | `pick_path` consulta `save_async` | Devuelve el nombre propuesto mientras el destino se elige en el diálogo del host. Sin esto no hay forma de guardar sin panel nativo. |
 | `crates/ui-egui/src/dialogs/mod.rs` | +24 −1 | Recorte de **alto** en el marco común + `ANCHOR_Y` | Solo recortaba el ancho. Un diálogo más alto que la ventana crecía por debajo y **se llevaba la fila de botones**: `Save for Web` era inusable en el móvil. |
@@ -76,10 +77,14 @@ Novedad entera. `472 + 547 + 582 + 7` líneas de Rust y `237` de Java.
 
 ## 3. Los 4 ficheros de la raíz que chocan con upstream
 
+De los 315 ficheros que cambia upstream, el port se solapa con **10**, y solo uno dio conflicto:
+`.gitignore` (2 líneas de upstream contra 5 del port; se quedan las dos). El resto auto-mergeó,
+incluido `canvas.rs` con 20 commits de upstream por encima.
+
 | Fichero | Cambio |
 |---|---|
 | `Cargo.toml` | `android_logger`, `winit` y el bloque `[target.'cfg(target_os = "android")']` del port |
-| `Cargo.lock` | `egui_file` + `dyn-clone`, y `jni` |
+| `Cargo.lock` | `egui_file` + `dyn-clone`, y `jni`. **No se toca a mano**: hay un workflow, `.github/workflows/regen-lock.yml`, que lo regenera con `dtolnay/rust-toolchain@stable` y lo sube como artefacto. Local no vale porque el cargo de aquí es más antiguo que el `rust-version` del workspace (1.95) y **baja versiones** al resolver |
 | `.gitignore` | `local.properties`, `.gradle/`, `jniLibs/` |
 | `ASSETS.md` | La fila del icono del launcher: vector original en XML |
 
@@ -294,7 +299,7 @@ GPU solo sube una textura y dibuja un quad
 |---|---|
 | **Teclado blando** | No aparece con `android-native-activity`. `NativeActivity` no tiene vista para el `InputMethodManager`. El arreglo es `androidx.games:games-activity:4.4.0` + la feature `game-activity` + `MainActivity extends GameActivity` |
 | **Gestos de un dedo** | Sin medir si un dedo ya panea o selecciona. La pan tool no se va a quitar |
-| **Rebase de upstream** | **97 commits** pendientes, y ya toca pronto: hay cambios en `crates/ui-egui` |
+| ~~Rebase de upstream~~ | **Hecho**: fusionados los 188 commits con `git merge`, **un solo conflicto** (`.gitignore`). `ci-ui` verde (3776 tests) y `.so` compilando sobre el upstream nuevo. Quedan 6 commits de un panel de Capas, con un unico solape en `dialogs/mod.rs` |
 | **Export web** | Genera ficheros muy grandes. Es del motor, no del port |
 | **`pick_folder`, `pick_open_multi`** | Sin conectar: son **síncronos** (`FnMut(…) -> Option<String>`) y un diálogo immediate-mode no devuelve una ruta en la misma llamada. Afecta a *Relink to Folder* y *Package* |
 | **Jugador de vídeo / texturas** | Sin probar en el móvil |
