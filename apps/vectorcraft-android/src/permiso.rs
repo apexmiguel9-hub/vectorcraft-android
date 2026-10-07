@@ -97,6 +97,15 @@ static MIRANDO: AtomicU32 = AtomicU32::new(0);
 /// llegue.
 static INTENTOS: AtomicU32 = AtomicU32::new(120);
 
+/// Frames que lleva la app viva. Se cuenta para no preguntar en el primer frame, que es
+/// cuando todavia no hay ventana y el salto a Ajustes se ve raro.
+static FRAMES: AtomicU32 = AtomicU32::new(0);
+
+/// Frames que se espera antes de abrir Ajustes por primera vez. MEDIDO que el arranque
+/// hasta que hay ventana ajena a lo que tarda: ~1,5 s a 60 Hz da margen de sobra y no se
+/// solapa con el primer frame visible.
+const ESPERA_ANTES_DE_PREGUNTAR: u32 = 90;
+
 /// Frames de gracia tras volver de Ajustes.
 ///
 /// MEDIDO el numero de frames, no de segundos, porque son lo que se puede medir sin
@@ -329,6 +338,9 @@ pub fn descartar() {
 /// MEDIDO que el unico sitio que se entera de que el usuario ha vuelto es un frame
 /// posterior, asi que en vez de adivinar se relee un rato y se para.
 pub fn cada_frame() {
+    FRAMES.fetch_add(1, Ordering::Relaxed);
+    preguntar_una_vez();
+
     // La clase llega en el `onCreate`, antes que el primer frame, asi que normalmente
     // esto ya no hace falta. Se deja un intento por frame los primeros instantes por si
     // el orden se tuerce, **con tope**: sin el, un fallo de JNI seria una llamada por
@@ -358,6 +370,61 @@ pub fn cada_frame() {
         log::info!("permiso: se deja de mirar; concedido = {hay}");
     } else if antes == 1 {
         log::info!("permiso: vuelve a mirar tras volver de Ajustes");
+    }
+}
+
+/// Crear el directorio de documentos y preguntar el permiso **una sola vez**.
+///
+/// MEDIDO por que hace falta crearlo: el browser arranca ahi porque es lo unico que se
+/// puede leer sin permiso, y si el directorio no existe el `read_dir` falla con
+/// `No such file or directory (os error 2)`. Es literalmente lo que se vio al probarlo:
+///
+/// ```text
+/// Abrir
+/// /data/data/ai.storyteller.vectorcraft/documents
+/// No such file or directory (os error 2)
+/// ```
+///
+/// MEDIDO por que se pregunta solo una vez y no en cada arranque: sin esto, cada vez que
+/// se mata la app sale un salto a Ajustes, que es de las cosas que mas gente odia en
+/// Android. El marcador es **un fichero**, no `SharedPreferences`, y asi no hace falta ni
+/// un metodo mas de JNI para lo unico que hay que recordar entre arranques.
+fn preguntar_una_vez() {
+    let dir = directorio_privado();
+    // MEDIDO: el fallo se registra en vez de tragarselo con `let _ =` a secas, porque si
+    // el directorio no se puede crear el browser sale con `os error 2` y no dice por que.
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::error!("permiso: no se pudo crear {}: {e}", dir.display());
+    }
+
+    if concedido() || DESCARTADO.load(Ordering::Acquire) || ya_preguntado() {
+        return;
+    }
+    if FRAMES.load(Ordering::Relaxed) < ESPERA_ANTES_DE_PREGUNTAR {
+        return;
+    }
+    marcar_preguntado();
+    log::info!("permiso: primera vez; se abren los Ajustes de almacenamiento");
+    pedir();
+}
+
+/// El fichero que recuerda que ya se pregunto.
+fn marca() -> std::path::PathBuf {
+    match std::env::var("HOME") {
+        Ok(h) if !h.is_empty() => std::path::PathBuf::from(h).join(".permiso-preguntado"),
+        _ => std::path::PathBuf::from("/data/data/ai.storyteller.vectorcraft/.permiso-preguntado"),
+    }
+}
+
+fn ya_preguntado() -> bool {
+    marca().is_file()
+}
+
+fn marcar_preguntado() {
+    // MEDIDO: si el fichero no se puede escribir se pregunta otra vez en el siguiente
+    // arranque. Peor un salto de mas a Ajustes que un bucle de saltos.
+    if let Err(e) = std::fs::write(marca(), b"1") {
+        log::debug!("permiso: no se pudo marcar que ya se pregunto: {e}");
     }
 }
 
