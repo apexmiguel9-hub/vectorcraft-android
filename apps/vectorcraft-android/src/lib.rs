@@ -80,7 +80,7 @@
 //! ejemplo de egui reserva 32 puntos arriba con un `Panel::top`).
 
 use vectorcraft_engine::Session;
-use vectorcraft_ui_egui::{Services, VectorcraftApp};
+use vectorcraft_ui_egui::VectorcraftApp;
 
 #[cfg(target_os = "android")]
 mod browser;
@@ -125,8 +125,11 @@ impl eframe::App for App {
 pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn eframe::App>, String> {
     #[cfg(target_os = "android")]
     let services = browser::services();
+    // MEDIDO: el import de `Services` sobra en Android porque aqui solo se usa para el
+    // `default()` de escritorio, y el de Android lo construye `browser::services()`. Por
+    // eso va con la ruta completa y no en el `use`.
     #[cfg(not(target_os = "android"))]
-    let services = Services::default();
+    let services = vectorcraft_ui_egui::Services::default();
 
     Ok(Box::new(App(VectorcraftApp::new(Session::new(), services))))
 }

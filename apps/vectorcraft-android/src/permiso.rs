@@ -259,8 +259,13 @@ fn leer() {
         };
         Ok(Ok(v))
     });
+    // MEDIDO, y el error lo decia:
+    //     expected `bool`, found `Result<_, _>`
+    // `env` **aplana** el `Result` anidado de `con_env` —que existe porque
+    // `attach_current_thread_for_scope` exige `E: From<Error>`—, asi que aqui ya no hay
+    // dos niveles. Es el mismo error que salio al ultimo con `pick_open`.
     match r {
-        Ok(Ok(v)) => {
+        Ok(v) => {
             let antes = CONCEDIDO.swap(v, Ordering::AcqRel);
             if antes != v {
                 log::info!("permiso: acceso a todos los archivos: {v}");
@@ -268,8 +273,7 @@ fn leer() {
         }
         // No es un fallo de la app: es que la clase de Java todavia no ha llegado, y se
         // reintenta en `cada_frame`.
-        Ok(Err(e)) => log::debug!("permiso: {e}"),
-        Err(e) => log::debug!("permiso: sin JVM todavia ({e})"),
+        Err(e) => log::debug!("permiso: {e}"),
     }
 }
 
@@ -305,11 +309,11 @@ pub fn pedir() {
         }
         Ok(Ok(texto(e, v)?))
     });
+    // MEDIDO, mismo aplanado que en `leer`.
     match r {
-        Ok(Ok(v)) if v.is_empty() => log::info!("permiso: Ajustes de almacenamiento abiertos"),
-        Ok(Ok(v)) => log::error!("permiso: no se pudieron abrir los Ajustes: {v}"),
-        Ok(Err(e)) => log::error!("permiso: {e}"),
-        Err(e) => log::error!("permiso: sin puente de Java ({e})"),
+        Ok(v) if v.is_empty() => log::info!("permiso: Ajustes de almacenamiento abiertos"),
+        Ok(v) => log::error!("permiso: no se pudieron abrir los Ajustes: {v}"),
+        Err(e) => log::error!("permiso: {e}"),
     }
 }
 

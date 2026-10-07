@@ -120,14 +120,14 @@ struct Estado {
     para: Para,
 }
 
-/// MEDIDO: estado por hilo y no un `static`, y el motivo concreto.
-///
-/// El update de egui corre en el hilo de `android_main`, y ahi se llaman **todos** los
-/// ganchos que nos importan: `open_async` y `place_async` desde el menu, y `logic`
-/// desde `eframe::App::logic`. Con un `static Mutex<Option<Estado>>` haria falta que
-/// `FileDialog` fuera `Send`, y eso no se puede comprobar sin compilar. Con
-/// `thread_local!` no hace falta ningun `Send`, y `RefCell` avisa en vez de corromper si
-/// alguna vez se reentra.
+// MEDIDO: estado por hilo y no un `static`, y el motivo concreto.
+//
+// El update de egui corre en el hilo de `android_main`, y ahi se llaman **todos** los
+// ganchos que nos importan: `open_async` y `place_async` desde el menu, y `logic`
+// desde `eframe::App::logic`. Con un `static Mutex<Option<Estado>>` haria falta que
+// `FileDialog` fuera `Send`, y eso no se puede comprobar sin compilar. Con
+// `thread_local!` no hace falta ningun `Send`, y `RefCell` avisa en vez de corromper si
+// alguna vez se reentra.
 thread_local! {
     static ESTADO: RefCell<Option<Estado>> = const { RefCell::new(None) };
 }
@@ -258,7 +258,13 @@ fn mostrar(para: Para, nuevo: fn() -> FileDialog, filtros: Filtros, multi: bool)
     // MEDIDO: arrancar en un sitio real. Sin permiso, `/storage/emulated/0` no se puede
     // ni listar, asi que se abre en lo nuestro, que siempre se puede.
     let inicio = if permiso::concedido() { PathBuf::from("/storage/emulated/0") } else { permiso::directorio_privado() };
-    dialogo = dialogo.initial_path(inicio).open();
+    dialogo = dialogo.initial_path(inicio);
+    // MEDIDO, y lo dice el propio error de compilacion:
+    //     expected `FileDialog`, found `()`
+    //     note: method `open` modifies its receiver in-place
+    // O sea que `open()` es `fn open(&mut self)`, no un constructor de cadena. Encadenar
+    // `.open()` al final devolvia `()` y no el dialogo.
+    dialogo.open();
     ESTADO.with(|c| *c.borrow_mut() = Some(Estado { dialogo, para }));
 }
 
