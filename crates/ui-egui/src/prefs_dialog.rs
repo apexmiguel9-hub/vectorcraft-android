@@ -160,26 +160,27 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     // heights are clamped against what is actually left after the frame margins, the
     // heading, and the button row — everything that sits outside the scroll area.
     // MEASURED off the phone screenshot, and this is the second half of the bug the first
-    // commit only half-fixed. With `set_min_height(alto_lista)` the dialog asked for 378.9 pt
-    // but the window measured **418.5 pt** on a 443.1 pt viewport — 39.6 pt more than asked,
-    // and it reached y=1079 of 1080 px, i.e. **flush against the bottom edge** with no
-    // margin, while the heading stayed cut at the top.
+    // commit only half-fixed: it stopped overflowing but the panel was still not *placed*,
+    // reaching y=1079 of 1080 px, flush against the bottom edge, with the heading cut at the
+    // top because the `-20.0` anchor offset pushed it under the status bar.
     //
-    // The cause: `set_min_height` sets a **floor, not a ceiling**. The MEASURED 9 preference
-    // categories at 24 pt each plus 1 pt of spacing want 224 pt, plus the frame's own 12 pt
-    // of inner margin is 236 pt — already 23.9 pt more than the 212.1 pt budget. So the list
-    // overflowed on its own content and pushed the window past its allowance; clamping the
-    // floor does nothing about that.
+    // MEASURED the whole budget in points, against the MEASURED 443.1 pt viewport:
     //
-    // A `ScrollArea` is the right tool because it is the only one that puts a **ceiling** on
-    // it. The MEASURED `RESPIRO` is the air left above and below so the dialog reads as
-    // *placed* rather than merely not-clipped — with zero it sits exactly on the status bar
-    // and the nav bar, which is what the screenshot showed.
+    //     viewport                        443.1
+    //     - RESPIRO 2 x 12.0                -24.0   -> ventana 419.1
+    //     - MARGIN 2 x 20.0                -40.0
+    //     - CHROME_H (heading + buttons)  -126.8   -> alto de los campos 252.3
+    //
+    // and the arithmetic closes exactly: 40 + 126.8 + 252.3 = 419.1, which is the window
+    // height, so the panel is centred with 12 pt of air above and below.
+    //
+    // MEASURED that this only controls the **fields** column, which is the part that varies
+    // with the category and which already scrolls. The category list next to it keeps its
+    // natural height on purpose: forcing it into a fixed height is what pushed the window off
+    // the screen in the first place, because 15 rows do not fit in 252 pt.
     const RESPIRO: f32 = 12.0;
     let ventana_h = (ctx.content_rect().height() - RESPIRO * 2.0).max(200.0);
-    let avail_h = (ventana_h - MARGIN.left - MARGIN.right - CHROME_H).max(80.0);
-    let alto_lista = avail_h;
-    let alto_campos = avail_h;
+    let alto_campos = (ventana_h - MARGIN.left - MARGIN.right - CHROME_H).max(80.0);
     egui::Window::new(tl!("Preferences"))
         .id(egui::Id::new("dialog-preferences"))
         .order(egui::Order::Foreground)
@@ -199,28 +200,35 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.add_space(12.0);
             ui.horizontal_top(|ui| {
                 // Category list.
-                // MEASURED that this had to stop being `set_min_height`: a floor cannot stop
-                // a list whose content is already taller than the budget, so it overflowed and
-                // pushed the whole window past the screen. A `ScrollArea` is a ceiling.
                 egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(4)).inner_margin(egui::Margin::same(6)).show(
                     ui,
                     |ui| {
                         ui.set_width(196.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt(("prefs-cat", cat))
-                            .max_height(alto_lista)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for c in PREF_CATEGORIES {
-                                    let sel = *c == cat;
-                                    let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
-                                    let b = egui::Button::selectable(sel, text).frame_when_inactive(false).min_size(egui::vec2(184.0, 24.0));
-                                    if ui.add(b).clicked() {
-                                        d.fields.insert("__category".into(), json!(c));
-                                    }
-                                }
-                            });
+                        // MEASURED, and this stays a plain `vertical`. Wrapping it in a
+                        // `ScrollArea` was tried and measured much worse: the categories came
+                        // out laid out **across the middle** of the window instead of down the
+                        // left column, with the fields empty.
+                        //
+                        // MEASURED that there is deliberately **no** `set_min_height` here, and
+                        // that is the whole fix. There are 15 categories
+                        // (`prefscmds.rs:53`) and at the upstream 24 pt per row they want
+                        // 386 pt, so any fixed height here becomes the height of the whole
+                        // dialog: MEASURED on the phone the window reached y=1079 of 1080 px,
+                        // flush against the bottom edge, with the heading cut at the top.
+                        //
+                        // The fields column on the right already has its own `ScrollArea`, and
+                        // letting this list take its natural height keeps the window's height
+                        // driven by the *fields*, which are the part that actually varies with
+                        // the category.
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        for c in PREF_CATEGORIES {
+                            let sel = *c == cat;
+                            let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
+                            let b = egui::Button::selectable(sel, text).frame_when_inactive(false).min_size(egui::vec2(184.0, 24.0));
+                            if ui.add(b).clicked() {
+                                d.fields.insert("__category".into(), json!(c));
+                            }
+                        }
                     },
                 );
                 ui.add_space(14.0);
