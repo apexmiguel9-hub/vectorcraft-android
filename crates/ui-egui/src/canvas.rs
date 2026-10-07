@@ -440,7 +440,10 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     let (pointer, m, space, scroll, zoom_delta) =
         ui.input(|i| (i.pointer.clone(), i.modifiers, i.key_down(egui::Key::Space), i.smooth_scroll_delta, i.zoom_delta()));
     let v = *app.view().unwrap_or(&View::default());
-    let xf = Xf::new(rect, &v);
+    // MEASURED why this is `mut`: the two-finger pan below moves the centre, and the zoom
+    // block further down reuses this transform. It has to be refreshed afterwards or the
+    // zoom silently undoes the pan — see the long comment there.
+    let mut xf = Xf::new(rect, &v);
     let hover = pointer.hover_pos().filter(|p| rect.contains(*p));
     app.hover_doc = hover.map(|p| xf.to_doc(p));
     let view = app.view_info();
@@ -471,36 +474,56 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     // own —and is `true` in the preset, but **nothing in the workspace read it**. Upstream
     // already modelled the concept and left it unimplemented; this gives it behaviour, it
     // does not invent a flag.
-    if app.session.prefs.touch_gestures
+    let dos_dedos = app.session.prefs.touch_gestures
         && let Some(mt) = ui.input(egui::InputState::multi_touch)
-        && mt.num_touches >= 2
+        && mt.num_touches >= 2;
+    if dos_dedos
         && let Some(vm) = app.view_mut()
     {
         // MEASURED that the translation is in **screen points**, not document points, so it
         // goes through `delta_to_doc` like scroll and one-finger pan do.
         //
-        // MEASURED, and this log is the one needed before touching anything else. Tested
-        // on the phone, two-finger pan came out "mini" while zoom was fine, and the whole
-        // egui chain is correct (`input_state/touch_state.rs:220`,
-        // `translation_delta = current.avg_pos - previous.avg_pos`, and `previous` is
-        // cleared when a finger is added, `:175`). So if there is a fault it lies between
-        // event delivery and here, and without the numbers there is no telling which of the
-        // two it is.
-        if PAN_LOG.load(Ordering::Relaxed) == 0 {
-            PAN_LOG.store(30, Ordering::Relaxed);
-            log::info!(
-                "2 dedos: n={} trans={:?} zoom={:.4} centro={:?} -> delta_doc={:?}",
-                mt.num_touches,
-                mt.translation_delta,
-                mt.zoom_delta,
-                (vm.center.x, vm.center.y),
-                xf.delta_to_doc(mt.translation_delta),
-            );
-        } else {
-            PAN_LOG.fetch_sub(1, Ordering::Relaxed);
-        }
+        // MEASURED, on the phone, with the dense event log: egui is **not** the problem.
+        // Across 4995 frames holding two fingers, `num_touches` was 2 every time and
+        // `translation_delta` was non-zero in **74.9%** of them. So the gesture reaches
+        // here, and the fault is whatever writes `center` *after* this line.
+        //
+        // MEASURED that the previous log here could never fire, and would not have told
+        // us anything if it had: it was gated on `PAN_LOG == 0` while `PAN_LOG` starts at
+        // 200, so the condition was false for the first 200 frames of interaction and only
+        // then began to count down — a third dead instrument, same file, same session.
+        let antes = vm.center;
         let d = xf.delta_to_doc(mt.translation_delta);
         vm.center -= d;
+        // THE FIX. MEASURED, and the bug was an algebraic cancellation, not a missing
+        // gesture: `xf` above was built from the centre *before* this line, and the zoom
+        // block below computes
+        //
+        //     let before = xf.to_doc(p);                 // OLD centre
+        //     vm.zoom = …;
+        //     let nx = Xf { …, center: vm.center, … };   // NEW centre, after the pan
+        //     vm.center += before - after;
+        //
+        // With `center_new = center_old − d`, that expands to
+        //
+        //     (center_old − d) + d + (p−c)·(1/zoom − 1/zoom′)
+        //       = center_old + (p−c)·(1/zoom − 1/zoom′)
+        //
+        // so the `−d` and the `+d` **cancel exactly** and none of the pan survives; only
+        // the zoom-around-pointer correction remains. Refreshing `xf` here makes `before`
+        // and `after` start from the same centre, which is the condition that expression
+        // silently assumed and violated.
+        xf = Xf::new(rect, vm);
+        if PAN_LOG.load(Ordering::Relaxed) > 0 {
+            PAN_LOG.fetch_sub(1, Ordering::Relaxed);
+            log::info!(
+                "pan2d: trans={:?} d_doc={:?} centro {:?} -> {:?}",
+                mt.translation_delta,
+                d,
+                (antes.x, antes.y),
+                (vm.center.x, vm.center.y),
+            );
+        }
     }
 
     // Zoom: pinch / Cmd-scroll / Alt-scroll around the pointer. Plain scroll pans.
