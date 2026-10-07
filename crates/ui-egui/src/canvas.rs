@@ -516,30 +516,54 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
         }
     }
 
-    // MEDIDO, y esto es lo que faltaba: el log de dentro del bloque **nunca salio** —cero
-    // lineas en el logcat—, asi que el bloque no se ejecuta, y hay tres condiciones que
-    // pueden cortarlo. Se miden las tres por separado, y ademas cuantos `Event::Touch`
-    // llegan por frame, que es lo que dice si el fallo es de winit o de aqui.
-    //
-    // MEDIDO de por que hace falta `events` ademas de `multi_touch`: el pan "mini" que
-    // reporta el usuario es real, asi que **algo** mueve el lienzo. Si `multi_touch()`
-    // dijera `None`, ese algo solo puede ser el puntero sintetizado que hace
-    // `egui-winit` desde un unico dedo (`egui-winit-0.36.2/src/lib.rs:900`, *"emit
-    // PointerButton resp. PointerMoved events to emulate mouse"*) —o sea el raton de un
-    // dedo, no el gesto de dos.
-    if PAN_LOG.load(Ordering::Relaxed) == 0
-        && (ui.input(|i| i.any_touches()) || ui.input(|i| i.multi_touch().is_some()))
-    {
+    // MEASURED, and this log replaced a worse one. The previous one sat **inside** the
+    // two-finger block, so it could only ever print when a multi-touch was already
+    // visible: "no touches arrived" and "the block never ran" produced the *same* silence,
+    // zero lines either way, for two different bugs. An instrument that cannot report
+    // absence is not an instrument, so this one is deliberately ungated and reports what
+    // egui actually holds.
+    if PAN_LOG.load(Ordering::Relaxed) == 0 {
         PAN_LOG.store(30, Ordering::Relaxed);
-        let toques = ui.input(|i| i.events.iter().filter(|e| matches!(e, egui::Event::Touch { .. })).count());
-        let multitactil = ui.input(|i| i.multi_touch().map(|m| (m.num_touches, m.translation_delta, m.zoom_delta)));
+        // MEASURED the reading that decides where the bug is, from
+        // `egui-0.36.2/src/input_state/mod.rs`:
+        //
+        //     pub fn has_touch_screen(&self) -> bool { !self.touch_states.is_empty() }
+        //
+        // `touch_states` gains entries in exactly one place —
+        // `create_touch_states_for_new_devices` (`mod.rs:851`), whose loop matches
+        // `Event::Touch { device_id, .. }` — and is **never cleared**. So
+        // `has_touch_screen` is a latch, and after the user has pinched on the device a
+        // `false` is proof that egui has not seen a single `Event::Touch` since startup:
+        // the fault is upstream of egui, in winit's input queue, not in gesture
+        // arbitration here.
+        let (clases, n, pantalla, multitactil, primary) = ui.input(|i| {
+            let clases: Vec<&str> = i
+                .events
+                .iter()
+                .map(|e| match e {
+                    egui::Event::Touch { .. } => "Touch",
+                    egui::Event::PointerButton { .. } => "PtrBtn",
+                    egui::Event::PointerMoved(_) => "PtrMove",
+                    egui::Event::PointerGone => "PtrGone",
+                    egui::Event::MouseWheel { .. } => "Wheel",
+                    egui::Event::Zoom { .. } => "Zoom",
+                    egui::Event::Key { .. } => "Key",
+                    _ => "otro",
+                })
+                .collect();
+            (
+                clases,
+                i.events.len(),
+                i.has_touch_screen(),
+                i.multi_touch().map(|m| (m.num_touches, m.translation_delta, m.zoom_delta)),
+                i.pointer.primary_down(),
+            )
+        });
         log::info!(
-            "gesto: pref={} toques_eventos={} multitactil={:?} zoom_delta={} pointer_down={}",
+            "eventos: tactil={pantalla} n={n} clases={clases:?} multitactil={multitactil:?} \
+             pref={} primary_down={primary} zoom={}",
             app.session.prefs.touch_gestures,
-            toques,
-            multitactil,
             ui.input(|i| i.zoom_delta()),
-            ui.input(|i| i.pointer.primary_down()),
         );
     } else {
         PAN_LOG.fetch_sub(1, Ordering::Relaxed);
