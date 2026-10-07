@@ -480,6 +480,35 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
         }
     }
 
+    // MEDIDO, y esto es lo que faltaba: el log de dentro del bloque **nunca salio** —cero
+    // lineas en el logcat—, asi que el bloque no se ejecuta, y hay tres condiciones que
+    // pueden cortarlo. Se miden las tres por separado, y ademas cuantos `Event::Touch`
+    // llegan por frame, que es lo que dice si el fallo es de winit o de aqui.
+    //
+    // MEDIDO de por que hace falta `events` ademas de `multi_touch`: el pan "mini" que
+    // reporta el usuario es real, asi que **algo** mueve el lienzo. Si `multi_touch()`
+    // dijera `None`, ese algo solo puede ser el puntero sintetizado que hace
+    // `egui-winit` desde un unico dedo (`egui-winit-0.36.2/src/lib.rs:900`, *"emit
+    // PointerButton resp. PointerMoved events to emulate mouse"*) —o sea el raton de un
+    // dedo, no el gesto de dos.
+    if PAN_LOG.load(Ordering::Relaxed) == 0
+        && (ui.input(|i| i.any_touches()) || ui.input(|i| i.multi_touch().is_some()))
+    {
+        PAN_LOG.store(30, Ordering::Relaxed);
+        let toques = ui.input(|i| i.events.iter().filter(|e| matches!(e, egui::Event::Touch { .. })).count());
+        let multitactil = ui.input(|i| i.multi_touch().map(|m| (m.num_touches, m.translation_delta, m.zoom_delta)));
+        log::info!(
+            "gesto: pref={} toques_eventos={} multitactil={:?} zoom_delta={} pointer_down={}",
+            app.session.prefs.touch_gestures,
+            toques,
+            multitactil,
+            ui.input(|i| i.zoom_delta),
+            ui.input(|i| i.pointer.primary_down()),
+        );
+    } else {
+        PAN_LOG.fetch_sub(1, Ordering::Relaxed);
+    }
+
     let tool = app.session.tool_id();
     let pan_mode = space || tool == "hand";
     let middle_pan = matches!(drag, Some(Drag::Pan { middle: true, .. }));
