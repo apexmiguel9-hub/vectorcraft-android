@@ -355,6 +355,7 @@ impl Default for UiState {
             toolbar: true,
             toolbar_double: false,
             toolbar_advanced: false,
+            touch_gestures: false,
             task_bar: true,
             slot_tool: Default::default(),
             status_bar: true,

@@ -425,7 +425,7 @@ fn pan_tactil(
         // volver a preguntar.
         return Some(Drag::Pan { start, center, middle: false, touch: None });
     }
-    if ui.input(|i| i.time.unwrap_or_default()) - t.pressed_at < ARMADO_TACTIL {
+    if ui.input(|i| i.time) - t.pressed_at < ARMADO_TACTIL {
         return None;
     }
     // MEDIDO: el recuadro necesita su propio `Down` en el punto donde se armo, porque es un
@@ -531,7 +531,7 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
             // tool mano en un escritorio no hay nada que armar, asi que el recuadro largo no
             // existe ahi y el arrastre es pan desde el primer pixel, como siempre.
             let touch = (app.ui.touch_gestures && ui.input(|i| i.any_touches()) && tool != "hand")
-                .then(|| TouchPan { pressed_at: ui.input(|i| i.time.unwrap_or_default()) });
+                .then(|| TouchPan { pressed_at: ui.input(|i| i.time) });
             Drag::Pan { start: p, center: v.center, middle: false, touch }
         } else if tool == "zoom" {
             Drag::ZoomBox { start: p }
