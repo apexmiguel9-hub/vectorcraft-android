@@ -1087,9 +1087,9 @@ dependencies = [
 
 [[package]]
 name = "either"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
+checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "emath"
@@ -1268,9 +1268,9 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "fearless_simd"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3772b63c40606beea8fe1f7b06a60de27ceb9bfc2d9dad3427368ca41dc7e62"
+checksum = "3296eb97d869113eaf148a6bdf01884e90b3828ad7ae2340b0f93362fc158611"
 
 [[package]]
 name = "find-msvc-tools"
@@ -1757,7 +1757,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "000e025850f4592ddcaee85640db70704151f2bafd43b6f431aa5b6a2c6a35a9"
 dependencies = [
- "fearless_simd 1.0.0",
+ "fearless_simd 1.1.0",
  "hayro-ccitt 0.4.0",
 ]
 
@@ -2317,9 +2317,9 @@ dependencies = [
 
 [[package]]
 name = "muda"
-version = "0.21.0"
+version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6744ab645ebe79f9c428455c7cb9dfa4275fa3b50a25408e08f927da8dc618c"
+checksum = "9a7b000cca0783af26837fe2ebd9ddf1c42279463c085b97622ee1d2f444b89e"
 dependencies = [
  "crossbeam-channel",
  "dpi",
@@ -2328,7 +2328,6 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
- "once_cell",
  "png 0.18.1",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
@@ -4344,7 +4343,7 @@ dependencies = [
  "image",
  "log",
  "muda",
- "objc2 0.6.4",
+ "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "rfd",
  "serde_json",
@@ -5966,18 +5965,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.60"
+version = "0.8.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6400fc4bb7426f6faac3fb07566122bb18622e3022bd2c36426a92ed489b1dbe"
+checksum = "879fb705ce98c32e41ebdb970fbe1204f8492423b314c6ab0354c3e7b5542866"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.60"
+version = "0.8.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99c27cc7525bad4df59a45e073c45b2c2aa820efb588234cc23a547ec69a34db"
+checksum = "708882a28301d604fa039cc7727607a98d04c4b86dc76ec9cc683f805d709759"
 dependencies = [
  "proc-macro2",
  "quote",
