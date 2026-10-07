@@ -159,8 +159,15 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     // Same trap as `new_document.rs`: `inner_margin` adds outside, not inside. So the two
     // heights are clamped against what is actually left after the frame margins, the
     // heading, and the button row — everything that sits outside the scroll area.
-    let avail_h = ctx.content_rect().height() - MARGIN.left - MARGIN.right - CHROME_H;
-    let alto_lista = (430.0f32).min(avail_h).max(120.0);
+    // MEASURED that the anchor offset had to go: with `[0.0, -20.0]` on a MEASURED 443.1 pt
+    // viewport the window was pushed 20 pt up, so the `Preferences` heading sat **under the
+    // status bar** and was cut off. `CENTER_CENTER` with no offset centres it.
+    //
+    // MEASURED that `RESPIRO` is the air above and below, so the panel reads as *placed*
+    // rather than merely not-clipped. 12 pt each side against the MEASURED 24.2 pt status
+    // bar inset and the nav bar.
+    const RESPIRO: f32 = 12.0;
+    let avail_h = (ctx.content_rect().height() - RESPIRO * 2.0 - MARGIN.left - MARGIN.right - CHROME_H).max(80.0);
     let alto_campos = (400.0f32).min(avail_h).max(80.0);
     egui::Window::new(tl!("Preferences"))
         .id(egui::Id::new("dialog-preferences"))
@@ -168,7 +175,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         .collapsible(false)
         .resizable(false)
         .title_bar(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(MARGIN))
         .show(ctx, |ui| {
             ui.set_width(760.0);
@@ -180,18 +187,37 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     ui,
                     |ui| {
                         ui.set_width(196.0);
-                        ui.set_min_height(alto_lista);
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 1.0;
-                            for c in PREF_CATEGORIES {
-                                let sel = *c == cat;
-                                let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
-                                let b = egui::Button::selectable(sel, text).frame_when_inactive(false).min_size(egui::vec2(184.0, 24.0));
-                                if ui.add(b).clicked() {
-                                    d.fields.insert("__category".into(), json!(c));
+                        // THE FIX, and it is the left column only. MEASURED: there are **15**
+                        // categories (`prefscmds.rs:53`) at 24 pt plus 1 pt of spacing, which
+                        // is 386 pt of content, against the MEASURED 216.1 pt this dialog has
+                        // left. `set_min_height` was a **floor**, so the list overflowed it and
+                        // the window grew: MEASURED on the phone it reached y=1079 of 1080 px,
+                        // flush against the bottom edge, with the heading cut at the top.
+                        //
+                        // A `ScrollArea` is the only thing here that puts a **ceiling** on the
+                        // column, so the window no longer grows for the list. MEASURED that it
+                        // goes *inside* the `Frame` and replaces the `ui.vertical(..)` rather
+                        // than wrapping it — an earlier attempt kept both, the `ScrollArea` took
+                        // the parent's width and the categories came out laid out across the
+                        // middle of the window.
+                        //
+                        // If the list ever fits, the scroll area draws exactly as the plain
+                        // vertical did and there is no visible difference.
+                        egui::ScrollArea::vertical()
+                            .id_salt(("prefs-categorias",))
+                            .max_height(avail_h)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                for c in PREF_CATEGORIES {
+                                    let sel = *c == cat;
+                                    let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
+                                    let b = egui::Button::selectable(sel, text).frame_when_inactive(false).min_size(egui::vec2(184.0, 24.0));
+                                    if ui.add(b).clicked() {
+                                        d.fields.insert("__category".into(), json!(c));
+                                    }
                                 }
-                            }
-                        });
+                            });
                     },
                 );
                 ui.add_space(14.0);
