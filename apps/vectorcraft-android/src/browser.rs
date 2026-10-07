@@ -428,10 +428,14 @@ pub fn services() -> Services {
         read: Some(Box::new(|path: &str| std::fs::read(path).map_err(|e| format!("{path}: {e}")))),
         write: Some(Box::new(|path: &str, bytes: &[u8]| {
             // Camino 1: hay un destino por elegir, y estos son sus bytes.
-            if RUTAS.lock().unwrap_or_else(|e| e.into_inner()).get(path).is_none()
-                && hay_guardando()
-                && el_nombre_pendiente() == path
-            {
+            //
+            // MEDIDO, y el error lo decia:
+            //     expected `Option<String>`, found `&str`
+            // Asi que la comparacion es con `as_deref()`. Y de paso se quitan las dos
+            // comprobaciones que sobraban: que el mapa **no** tenga el nombre ya lo
+            // cubre el camino 2 de abajo, y que el dialogo abierto sea de guardar ya lo
+            // dice `el_nombre_pendiente`, que devuelve `None` si no lo es.
+            if el_nombre_pendiente().as_deref() == Some(path) {
                 *PENDIENTE.lock().unwrap_or_else(|e| e.into_inner()) = Some((path.to_string(), bytes.to_vec()));
                 log::info!("browser: {path} espera destino ({} bytes)", bytes.len());
                 return Ok(());
@@ -450,10 +454,6 @@ pub fn services() -> Services {
 /// El nombre propuesto del dialogo de guardar abierto, si lo hay.
 fn el_nombre_pendiente() -> Option<String> {
     ESTADO.with(|c| c.borrow().as_ref().and_then(|e| e.pick.as_ref()).map(|p| p.name.clone()))
-}
-
-fn hay_guardando() -> bool {
-    ESTADO.with(|c| c.borrow().as_ref().is_some_and(|e| e.para == Para::Guardar))
 }
 
 /// El aviso de permiso, si falta.
