@@ -474,10 +474,9 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     // own —and is `true` in the preset, but **nothing in the workspace read it**. Upstream
     // already modelled the concept and left it unimplemented; this gives it behaviour, it
     // does not invent a flag.
-    let dos_dedos = app.session.prefs.touch_gestures
+    if app.session.prefs.touch_gestures
         && let Some(mt) = ui.input(egui::InputState::multi_touch)
-        && mt.num_touches >= 2;
-    if dos_dedos
+        && mt.num_touches >= 2
         && let Some(vm) = app.view_mut()
     {
         // MEASURED that the translation is in **screen points**, not document points, so it
