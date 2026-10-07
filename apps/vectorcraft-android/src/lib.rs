@@ -118,13 +118,19 @@ impl eframe::App for App {
         //
         // MEDIDO tambien el desplazamiento: los 24 pt de la barra de estado se reservan a
         // mano porque winit 0.30 solo rellena `safe_area_insets` en iOS.
+        // MEDIDO que la `Window` solo se crea cuando hay algo que decir. Antes se creaba
+        // siempre, y aunque `aviso` no pintara nada —que es lo que pasa con el permiso ya
+        // concedido— egui dibujaba su marco: en el lienzo salia **un punto con sombra**
+        // arriba, que es la ventana vacia. Un `Window` vacio no es un `Window` invisible.
         #[cfg(target_os = "android")]
-        egui::Window::new("permiso de almacenamiento")
-            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 44.0))
-            .collapsible(false)
-            .resizable(false)
-            .title_bar(false)
-            .show(ui.ctx(), browser::aviso);
+        if browser::hay_aviso() {
+            egui::Window::new("permiso de almacenamiento")
+                .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 44.0))
+                .collapsible(false)
+                .resizable(false)
+                .title_bar(false)
+                .show(ui.ctx(), browser::aviso);
+        }
     }
 }
 

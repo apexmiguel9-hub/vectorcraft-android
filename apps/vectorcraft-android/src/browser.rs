@@ -183,6 +183,34 @@ pub fn logic(ctx: &egui::Context) {
 
         estado.dialogo.show(ctx);
 
+        // MEDIDO, y este es el arreglo del bug de "toco una carpeta y a veces no se abre".
+        //
+        // No es una carrera ni un fallo de lectura: es que `egui_file` pide **doble
+        // toque** para entrar en una carpeta (`src/lib.rs:813` y `:827`):
+        //
+        //     if response.clicked()        { … Command::Select(…) }            // selecciona
+        //     if response.double_clicked() { … Command::BrowseDirectory(…) }  // entra
+        //
+        // En un dedo, el doble toque solo se registra si los dos caen dentro del tiempo de
+        // egui. Tocar rapido entra; tocar despacio no. De ahi el "una de cada dos o
+        // tres", y de ahi que con un toque y el boton **Open** fuera siempre: un toque
+        // selecciona y el boton hace `OpenSelected`.
+        //
+        // El arreglo usa solo API publica, sin tocar el crate: tras un toque, la carpeta
+        // queda en `selected_file`, asi que `path()` es el directorio tocado y
+        // `directory()` sigue siendo el de antes. Si son distintos, se entra.
+        //
+        // MEDIDO que no hay bucle: al entrar, `set_path` llama a `refresh`, que hace
+        // `selected_file = None` (`lib.rs:494`), asi que `path()` vuelve a dar `None`.
+        if estado.dialogo.state() == State::Open
+            && let Some(tocado) = estado.dialogo.path().map(std::path::Path::to_path_buf)
+            && tocado.is_dir()
+            && tocado != estado.dialogo.directory()
+        {
+            log::info!("browser: se entra en {tocado}", tocado = tocado.display());
+            estado.dialogo.set_path(tocado);
+        }
+
         // MEDIDO, y es la instrumentacion del bug de las carpetas: un registro por
         // cambio de directorio, no uno por frame.
         let ahora = estado.dialogo.directory().to_path_buf();
@@ -481,6 +509,15 @@ pub fn services() -> Services {
 /// El nombre propuesto del dialogo de guardar abierto, si lo hay.
 fn el_nombre_pendiente() -> Option<String> {
     ESTADO.with(|c| c.borrow().as_ref().and_then(|e| e.pick.as_ref()).map(|p| p.name.clone()))
+}
+
+/// Si hay que mostrar el aviso de permiso.
+///
+/// MEDIDO que hace falta por separado de [`aviso`]: la `Window` se dibuja antes de llamar
+/// a `aviso`, asi que sin esto se creaba una ventana **vacia** y salia su marco en el
+/// lienzo —un punto con sombra— aunque no hubiera nada que decir.
+pub fn hay_aviso() -> bool {
+    permiso::hay_que_preguntar()
 }
 
 /// El aviso de permiso, si falta.
