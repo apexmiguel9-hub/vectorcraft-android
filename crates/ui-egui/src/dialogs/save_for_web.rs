@@ -45,7 +45,41 @@ pub(super) const SPEC: DialogSpec = DialogSpec {
 
 /// The preview area (panes and their captions) and the settings column.
 const PREVIEW_W: f32 = 620.0;
-const PREVIEW_H: f32 = 470.0;
+
+/// MEDIDO: what the columns shrink to when the window is short or narrow, so the dialog can
+/// be used rather than clipped. The 2400x1080 phone in landscape has 937.4 x 443.1 pt of
+/// viewport and this dialog is the biggest in the set, so it is the one that hits it.
+const PREVIEW_H_MIN: f32 = 200.0;
+const ANCHO_MIN: f32 = 240.0;
+
+/// The preview's height: what is actually free, not a fixed 470.
+///
+/// MEDIDO, and this is the bug: there was a constant of 470 pt for this, the whole dialog
+/// wanted ~586 pt tall, and the phone's viewport is 443.1 pt. The window grew past the
+/// bottom of the screen and the **Export row went with it**, so the dialog could not be
+/// confirmed at all. The common frame now clamps the height (`dialogs/mod.rs`), which is
+/// what keeps the button reachable; this takes what is left instead of asking for more.
+fn preview_h(ui: &egui::Ui) -> f32 {
+    ui.available_height().max(PREVIEW_H_MIN)
+}
+
+/// The two column widths: what is actually free, not a fixed 620 + 296.
+///
+/// MEDIDO: the columns add up to 932 pt and the frame's own margins are 2 x (22 + 8), so
+/// they do not fit a 937 pt window — the settings column was clipped off the right edge.
+fn anchos(ui: &egui::Ui) -> (f32, f32) {
+    let hay = ui.available_width() - GAP;
+    if hay >= PREVIEW_W + SIDE_W {
+        return (PREVIEW_W, SIDE_W);
+    }
+    let sobra = (PREVIEW_W - ANCHO_MIN).max(0.0) + (SIDE_W - ANCHO_MIN).max(0.0);
+    if sobra <= 0.0 {
+        return (hay / 2.0, hay / 2.0);
+    }
+    let falta = (PREVIEW_W + SIDE_W - hay).max(0.0);
+    let k = (falta / sobra).min(1.0);
+    (PREVIEW_W - (PREVIEW_W - ANCHO_MIN) * k, SIDE_W - (SIDE_W - ANCHO_MIN) * k)
+}
 const SIDE_W: f32 = 296.0;
 const GAP: f32 = 16.0;
 /// Label column and field widths of the settings column.
@@ -323,14 +357,15 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
     }
     let settings = settings_of(app, d);
     let mut browser = false;
+    let (w_previa, w_lado) = anchos(ui);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(PREVIEW_W);
+            ui.set_width(w_previa);
             browser = preview_area(app, ui, d, &settings);
         });
         ui.add_space(GAP);
         ui.vertical(|ui| {
-            ui.set_width(SIDE_W);
+            ui.set_width(w_lado);
             side(app, ui, d, settings.as_ref().ok());
         });
     });
@@ -349,7 +384,7 @@ fn preview_area(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, set
         d.fields.insert("__view".into(), json!(VIEWS[i]));
     }
     ui.add_space(4.0);
-    let (area, resp) = ui.allocate_exact_size(egui::vec2(PREVIEW_W, PREVIEW_H), egui::Sense::click_and_drag());
+    let (area, resp) = ui.allocate_exact_size(egui::vec2(anchos(ui).0, preview_h(ui)), egui::Sense::click_and_drag());
     let pan_id = egui::Id::new("save-for-web-pan");
     let mut pan: egui::Vec2 = ui.ctx().data(|m| m.get_temp(pan_id)).unwrap_or_default();
     if resp.dragged() {
@@ -515,7 +550,7 @@ fn pairs<T: Copy>(all: &[T], key: fn(T) -> &'static str, label: fn(T) -> &'stati
 fn side(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, s: Option<&WebSettings>) {
     presets_row(app, ui, d, s);
     widgets::divider(ui);
-    egui::ScrollArea::vertical().id_salt("sfw-settings").max_height(PREVIEW_H - 40.0).auto_shrink([false, true]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("sfw-settings").max_height((preview_h(ui) - 40.0).max(60.0)).auto_shrink([false, true]).show(ui, |ui| {
         let choice = |ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, options: &[(&str, &str)]| {
             form::choice(ui, d, key, label, (LABEL_W, FIELD_W), options);
         };
@@ -697,9 +732,9 @@ fn color_table(ui: &mut egui::Ui, d: &mut Dialog, s: Option<&WebSettings>) {
         .chain(shot.mapped.iter().map(|c| (TableColor { color: *c, source: *c, transparent: true, locked: false, web_shifted: false }, true)))
         .collect();
     const CELL: f32 = 15.0;
-    let per_row = ((SIDE_W - 8.0) / (CELL + 2.0)).floor().max(1.0) as usize;
+    let per_row = (((anchos(ui).1 - 8.0).max(CELL)) / (CELL + 2.0)).floor().max(1.0) as usize;
     let lines = rows.len().div_ceil(per_row).max(1);
-    let (area, resp) = ui.allocate_exact_size(egui::vec2(SIDE_W - 8.0, lines as f32 * (CELL + 2.0)), egui::Sense::click());
+    let (area, resp) = ui.allocate_exact_size(egui::vec2((anchos(ui).1 - 8.0).max(40.0), lines as f32 * (CELL + 2.0)), egui::Sense::click());
     let p = ui.painter();
     for (i, (c, mapped)) in rows.iter().enumerate() {
         let r = egui::Rect::from_min_size(

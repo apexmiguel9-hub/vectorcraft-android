@@ -144,6 +144,53 @@ public class MainActivity extends NativeActivity {
         Log.i(TAG, "vectorcraft: Activity creada, permiso=" + hayPermiso());
     }
 
+    /**
+     * Los insets del sistema, medidos en la ventana, en **puntos** y como {@code l,t,r,b}.
+     *
+     * MEDIDO por que hace falta esto a mano: {@code winit} 0.30 rellena
+     * {@code RawInput::safe_area_insets} **solo en iOS** —en
+     * {@code platform_impl/android/} no hay nada— y sin ellos {@code egui} dibuja debajo de
+     * la barra de estado y de los botones de navegacion, que es justo lo que se veia: la
+     * barra de menus pegada al reloj y las columnas derechas encima de los botones.
+     *
+     * <p>MEDIDO tambien que {@code setDecorFitsSystemWindows(true)} y
+     * {@code clearFlags(FLAG_LAYOUT_NO_LIMITS)} <b>no</b> redimensionan la superficie: el
+     * viewport se quedo en 937,4 x 443,1 pt con las dos cosas puestas. Por eso la
+     * correccion es restar los insets, y no tocar las flags.
+     *
+     * <p>MEDIDO el valor de uno de ellos, en 2400 x 1080 con densidad 390 (2,4375 px/pt):
+     * statusBars 59 px arriba = 24,2 pt; navigationBars 117 px a la derecha = 48,0 pt;
+     * displayCutout 115 px a la izquierda = 47,2 pt.
+     *
+     * <p>Los cuatro van separados por comas porque un array de {@code float} por JNI son
+     * dos llamadas y un {@code Object[]}, y aqui lo que hace falta son cuatro numeros que
+     * Rust lee una vez por frame.
+     *
+     * @return {@code "l,t,r,b"} en puntos, o cadena vacia si todavia no hay ventana.
+     */
+    private static String insets() {
+        try {
+            if (instance == null) {
+                return "";
+            }
+            android.view.View decor = instance.getWindow().getDecorView();
+            android.graphics.Rect r = decor.getRootWindowInsets();
+            if (r == null) {
+                return "";
+            }
+            android.graphics.Insets bars = r.getInsets(
+                    android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+            float d = getResources().getDisplayMetrics().density;
+            if (d <= 0f) {
+                return "";
+            }
+            return bars.left / d + "," + bars.top / d + "," + bars.right / d + "," + bars.bottom / d;
+        } catch (Throwable t) {
+            Log.w(TAG, "insets: " + t);
+            return "";
+        }
+    }
+
     @Override
     protected void onDestroy() {
         instance = null;

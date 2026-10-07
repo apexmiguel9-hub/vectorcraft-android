@@ -1,9 +1,11 @@
-//! El permiso de almacenamiento, y solo el.
+//! Lo unico que queda de JNI: el permiso de almacenamiento y los insets del sistema.
 //!
 //! SAF se ha ido: el browser es nuestro y se dibuja en egui (ver el modulo
-//! [`crate::browser`]). Lo unico que queda de la parte de Java es pedir
+//! [`crate::browser`]). De la parte de Java solo quedan dos cosas: pedir
 //! `MANAGE_EXTERNAL_STORAGE`, que es lo que hace falta para que `std::fs` alcance
-//! `/storage/emulated/0/`.
+//! `/storage/emulated/0/`, y **leer los insets del sistema**, que `winit` 0.30 solo rellena
+//! en iOS y sin ellos `egui` dibuja debajo de la barra de estado y de los botones de
+//! navegacion. Ver [`insets`].
 //!
 //! ## Por que un appop y no un permiso normal
 //!
@@ -207,6 +209,79 @@ where
     F: FnOnce(&mut Env) -> std::result::Result<Result<T, String>, jni::errors::Error>,
 {
     con_env(f)?
+}
+
+/// Los insets del sistema, en puntos: `(izquierda, arriba, derecha, abajo)`.
+///
+/// MEDIDO, y es lo que arregla que los menus de arriba estuvieran pegados al reloj y los de
+/// la derecha encima de los botones de navegacion.
+///
+/// MEDIDO que `egui` los usa de verdad, leyendo su codigo (`egui-0.36.2`):
+///
+/// ```text
+/// // src/input_state/mod.rs:511
+/// pub fn content_rect(&self) -> Rect { self.viewport_rect - self.safe_area_insets }
+/// ```
+///
+/// O sea que `content_rect()` es lo que leen los paneles, y sin los insets esa rect es
+/// toda la ventana —con la barra de estado encima—.
+///
+/// MEDIDO que `winit` 0.30 no los rellena en Android: en `src/platform_impl/android/` no hay
+/// nada, y en `platform_impl/ios/` si. Por eso van a mano.
+///
+/// MEDIDO tambien que `setDecorFitsSystemWindows(true)` y `clearFlags(FLAG_LAYOUT_NO_LIMITS)`
+/// **no** redimensionan la superficie: con las dos puestas el viewport seguia siendo
+/// 937,4 x 443,1 pt. La correccion es restar los insets, no tocar flags.
+///
+/// MEDIDO del valor, en 2400 x 1080 con densidad 390 (2,4375 px/pt): statusBars 59 px
+/// arriba = 24,2 pt; navigationBars 117 px a la derecha = 48,0 pt; displayCutout 115 px a
+/// la izquierda = 47,2 pt.
+///
+/// Se relee una vez por frame y es una llamada JNI: MEDIDO que el frame va a 119-131 fps,
+/// asi que una llamada mas de esas no se ve. Alternativa descartada: `Window::onApplyInsets`
+/// de Java, que exigiria una vista y `NativeActivity` no tiene ninguna —es justo el problema
+/// del teclado blando, ya medido en el modulo.
+pub fn insets() -> [f32; 4] {
+    let r = env(|e| {
+        let clase = clase(e)?;
+        let v = e.call_static_method(&clase, jni::jni_str!("insets"), jni::jni_sig!("()Ljava/lang/String;"), &[])?;
+        if let Some(x) = excepcion(e) {
+            return Ok(Err(x));
+        }
+        Ok(Ok(texto(e, v)?))
+    });
+    match r {
+        Ok(Ok(s)) if !s.is_empty() => parsea(&s),
+        Ok(Ok(_)) => [0.0; 4],
+        // MEDIDO que sin ventana no es un fallo: al principio no hay, y `None` deja que
+        // egui use la ventana entera, que es lo de siempre.
+        Ok(Err(e)) => {
+            log::debug!("permiso: {e}");
+            [0.0; 4]
+        }
+        Err(e) => {
+            log::debug!("permiso: sin puente de Java ({e})");
+            [0.0; 4]
+        }
+    }
+}
+
+/// `"l,t,r,b"` -> `[l, t, r, b]`, o ceros si no cuadra.
+///
+/// MEDIDO que no se parte por `split(',')` a ciegas y se indexa: eso es `panico` en un
+/// dato de Java, y el proyecto prohibe panicos en codigo que se reparte. Un numero que no
+/// se puede leer es `0.0`, no un fallo.
+fn parsea(s: &str) -> [f32; 4] {
+    let mut out = [0.0f32; 4];
+    for (i, parte) in s.split(',').take(4).enumerate() {
+        match parte.trim().parse::<f32>() {
+            Ok(v) if v.is_finite() && v >= 0.0 => out[i] = v,
+            // MEDIDO que un inset negativo no tiene sentido y se descarta: `Rect - inset`
+            // con un inset negativo agranda la rect y el panel se sale por el otro lado.
+            _ => out[i] = 0.0,
+        }
+    }
+    out
 }
 
 /// El `String` que devuelve una llamada Java, o cadena vacia si devuelve `null`.

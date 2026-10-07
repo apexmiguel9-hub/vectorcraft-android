@@ -104,6 +104,38 @@ impl eframe::App for App {
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(raw);
+        // MEDIDO, y es lo que hacia que la barra de menus estuviera pegada al reloj y las
+        // columnas derechas encima de los botones de navegacion.
+        //
+        // `egui` calcula `content_rect() = viewport_rect - safe_area_insets`
+        // (`egui-0.36.2/src/input_state/mod.rs:511`) y los paneles se colocan en ese rect.
+        // Sin los insets, `content_rect()` es la ventana entera, con la barra de estado
+        // encima.
+        //
+        // MEDIDO que `winit` 0.30 solo rellena esto en iOS, asi que en Android hay que
+        // ponerlos a mano. MEDIDO tambien que `setDecorFitsSystemWindows(true)` y
+        // `clearFlags(FLAG_LAYOUT_NO_LIMITS)` no redimensionan la superficie —el viewport se
+        // quedo en 937,4 x 443,1 pt—, asi que restar los insets es la via, no tocar flags.
+        //
+        // MEDIDO del valor, en 2400 x 1080 con densidad 390 (2,4375 px/pt): statusBars
+        // 59 px arriba = 24,2 pt; navigationBars 117 px a la derecha = 48,0 pt;
+        // displayCutout 115 px a la izquierda = 47,2 pt.
+        #[cfg(target_os = "android")]
+        {
+            let [l, t, r, b] = permiso::insets();
+            if l > 0.0 || t > 0.0 || r > 0.0 || b > 0.0 {
+                // MEDIDO, y copiado de la receta de `egui-winit` para iOS
+                // (`egui-winit-0.36.2/src/safe_area.rs`), que es el unico sitio del grafo
+                // que ya construia esto: `SafeAreaInsets` es un **newtype** de
+                // `epaint::MarginF32`, se reexporta en la raiz de `egui`, y se construye
+                // con el punto y no con llaves.
+                //
+                // MEDIDO que la ruta NO es `egui::input::SafeAreaInsets`: el modulo `input`
+                // es privado y el tipo sale por `egui::SafeAreaInsets`
+                // (`egui/src/context.rs:22`).
+                raw.safe_area_insets = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 { left: l, top: t, right: r, bottom: b }));
+            }
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

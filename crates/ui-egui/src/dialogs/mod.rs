@@ -98,6 +98,10 @@ type DialogResult = Result<Value, String>;
 const MARGIN: i8 = 22;
 const EDGE_GAP: f32 = 8.0;
 
+/// How far above the centre the dialog window sits (see the `.anchor` below). Kept as a
+/// constant because the height clamp has to leave room for it.
+const ANCHOR_Y: f32 = -40.0;
+
 /// How a dialog draws and applies itself. Specs start from [`DialogSpec::FORM`] and override what
 /// differs.
 pub(crate) struct DialogSpec {
@@ -307,13 +311,26 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         .collapsible(false)
         .resizable(false)
         .title_bar(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, -40.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, ANCHOR_Y])
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(MARGIN)))
         .show(ctx, |ui| {
             // Never wider than the window (a large UI scale in a small window): the text wraps.
             let room = (ctx.content_rect().width() - 2.0 * (f32::from(MARGIN) + EDGE_GAP)).max(EDGE_GAP);
             ui.set_min_width(spec.min_width.min(room));
             ui.set_max_width(spec.max_width.map_or(room, |w| w.min(room)));
+            // The height needs the same clamp as the width, and the absence of it is what made
+            // "Save for Web (Legacy)" unusable in a phone: the window grew past the bottom of the
+            // screen and the OK/Export row went with it, so there was no way to confirm.
+            //
+            // MEDIDO, on a 2400x1080 phone in landscape: the viewport is 937.4 x 443.1 pt, and
+            // that dialog asks for 932 pt of columns inside a frame of 2 x (22 + 8) and a
+            // ~470 pt preview, so it wanted ~932 x ~586. `Save for Web` is the widest and
+            // tallest dialog in the set; on a desktop window nothing ever hit this.
+            //
+            // MEDIDO that the anchor sits 40 pt above the centre (`ANCHOR_Y`), so that is
+            // subtracted too: the room below the centre is less than the window's half.
+            let alto = (ctx.content_rect().height() - 2.0 * (f32::from(MARGIN) + EDGE_GAP) - ANCHOR_Y.abs()).max(EDGE_GAP);
+            ui.set_max_height(alto);
             ui.label(egui::RichText::new(heading.as_str()).font(theme::semibold(16.0)).color(t.text));
             ui.add_space(12.0);
             cancel = (spec.body)(app, ui, &mut d);
