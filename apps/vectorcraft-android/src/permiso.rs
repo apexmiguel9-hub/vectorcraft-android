@@ -250,17 +250,20 @@ pub fn insets() -> [f32; 4] {
         }
         Ok(Ok(texto(e, v)?))
     });
+    // MEDIDO, y es la **tercera** vez que sale este error exacto, con el mismo mensaje:
+    //
+    //     expected `String`, found `Result<_, _>`
+    //
+    // `env` aplana el `Result` anidado de `con_env`, asi que aqui hay un solo nivel. Los
+    // `Ok(Ok(..))` que quedan en el archivo estan *dentro* de las closures —que si
+    // devuelven el anidado— y ahi son correctos; el que falla es el `match` de fuera.
     match r {
-        Ok(Ok(s)) if !s.is_empty() => parsea(&s),
-        Ok(Ok(_)) => [0.0; 4],
-        // MEDIDO que sin ventana no es un fallo: al principio no hay, y `None` deja que
+        Ok(s) if !s.is_empty() => parsea(&s),
+        // MEDIDO que sin ventana no es un fallo: al principio no hay, y ceros deja que
         // egui use la ventana entera, que es lo de siempre.
-        Ok(Err(e)) => {
-            log::debug!("permiso: {e}");
-            [0.0; 4]
-        }
+        Ok(_) => [0.0; 4],
         Err(e) => {
-            log::debug!("permiso: sin puente de Java ({e})");
+            log::debug!("permiso: {e}");
             [0.0; 4]
         }
     }
