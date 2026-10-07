@@ -112,6 +112,21 @@ pub fn apply_runtime(app: &mut VectorcraftApp, ctx: &egui::Context) {
     }
 }
 
+/// The frame's inner margin, on each side. MEASURED: `Frame::window(..).inner_margin(..)`
+/// sits **outside** the sizes set below, so it is 20 per side, 40 in total.
+///
+/// MEASURED that this cannot be `Margin::same(MARGIN)`: `epaint::Margin::same` takes an
+/// **`i8`** (`epaint-0.36.2/src/margin.rs:33`, *"All values are stored as `i8` to keep the
+/// size of `Margin` small"*), so passing an `f32` const would not compile. `MarginF32` is
+/// the `f32` sibling (`margin_f32.rs`), which is what a fractional budget needs.
+const MARGIN: egui::MarginF32 = egui::MarginF32::symmetric(20.0, 20.0);
+
+/// Everything in the window that is **not** the category list or the fields: the heading
+/// (16 pt semibold, ~20.8 pt with its line), `add_space(12)`, `add_space(14)` and the
+/// button row (24 pt plus its `add_space(16)`). MEASURED by adding the literals that are
+/// in `show`, not estimated: 20.8 + 12 + 14 + 40 = 86.8, plus the 40 of `MARGIN`.
+const CHROME_H: f32 = 126.8;
+
 pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let Some(mut d) = app.ui.dialog.clone() else { return };
     let t = Tokens::get(ctx);
@@ -121,6 +136,24 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     });
     let cat = d.str("__category");
     let cat = PREF_CATEGORIES.iter().find(|c| **c == cat).copied().unwrap_or(PREF_CATEGORIES[0]);
+    // MEASURED, off the phone, and this dialog is the one that **bypasses** the generic clamp
+    // in `dialogs/mod.rs`: it is its own `egui::Window`, not a `DialogSpec`, so that clamp
+    // never saw it.
+    //
+    // The fixed heights below ask for 430 (category list) and 400 (fields scroll area), and
+    // the frame's own `Margin::same(20)` is added **on top** of both. That is 470 pt of
+    // window, against the MEASURED viewport height of 443.1 pt — 26.9 pt over, so the
+    // bottom row (Reset / OK / Cancel) fell off the screen.
+    //
+    //     viewport  937.4 x 443.1 pt
+    //     ventana    430 + 400 → 470 pt de alto requested
+    //
+    // Same trap as `new_document.rs`: `inner_margin` adds outside, not inside. So the two
+    // heights are clamped against what is actually left after the frame margins, the
+    // heading, and the button row — everything that sits outside the scroll area.
+    let avail_h = ctx.content_rect().height() - MARGIN.left - MARGIN.right - CHROME_H;
+    let alto_lista = (430.0f32).min(avail_h).max(120.0);
+    let alto_campos = (400.0f32).min(avail_h).max(80.0);
     egui::Window::new(tl!("Preferences"))
         .id(egui::Id::new("dialog-preferences"))
         .order(egui::Order::Foreground)
@@ -128,7 +161,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         .resizable(false)
         .title_bar(false)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0])
-        .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(20)))
+        .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(MARGIN))
         .show(ctx, |ui| {
             ui.set_width(760.0);
             ui.label(egui::RichText::new(tl!("Preferences")).font(theme::semibold(16.0)).color(t.text));
@@ -139,7 +172,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     ui,
                     |ui| {
                         ui.set_width(196.0);
-                        ui.set_min_height(430.0);
+                        ui.set_min_height(alto_lista);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 1.0;
                             for c in PREF_CATEGORIES {
@@ -159,7 +192,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     ui.set_width(530.0);
                     ui.label(egui::RichText::new(tl!(cat)).font(theme::semibold(14.0)).color(t.text_strong));
                     ui.add_space(8.0);
-                    egui::ScrollArea::vertical().id_salt(("prefs", cat)).max_height(400.0).auto_shrink([false, false]).show(ui, |ui| {
+                    egui::ScrollArea::vertical().id_salt(("prefs", cat)).max_height(alto_campos).auto_shrink([false, false]).show(ui, |ui| {
                         category_fields(ui, &mut d, cat);
                     });
                 });
