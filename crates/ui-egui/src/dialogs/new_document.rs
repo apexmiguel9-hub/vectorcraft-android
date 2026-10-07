@@ -195,7 +195,7 @@ fn window(ctx: &egui::Context, id: &str, margin: i8, add: impl FnOnce(&mut egui:
     // knowable without asking egui at runtime, and the frame/margin rules add more on
     // top than the arithmetic assumes; guessing is what caused a 19pt overflow.
     //
-    // MEDIDO: there is no `screen_rect()` on `egui::Context` in 0.36, it is
+    // MEASURED: there is no `screen_rect()` on `egui::Context` in 0.36, it is
     // `viewport_rect()`:
     //
     //     error[E0599]: no method named `screen_rect` found for reference

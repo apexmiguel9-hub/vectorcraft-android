@@ -46,7 +46,7 @@ pub(super) const SPEC: DialogSpec = DialogSpec {
 /// The preview area (panes and their captions) and the settings column.
 const PREVIEW_W: f32 = 620.0;
 
-/// MEDIDO: what the columns shrink to when the window is short or narrow, so the dialog can
+/// MEASURED: what the columns shrink to when the window is short or narrow, so the dialog can
 /// be used rather than clipped. The 2400x1080 phone in landscape has 937.4 x 443.1 pt of
 /// viewport and this dialog is the biggest in the set, so it is the one that hits it.
 const PREVIEW_H_MIN: f32 = 200.0;
@@ -54,7 +54,7 @@ const ANCHO_MIN: f32 = 240.0;
 
 /// The preview's height: what is actually free, not a fixed 470.
 ///
-/// MEDIDO, and this is the bug: there was a constant of 470 pt for this, the whole dialog
+/// MEASURED, and this is the bug: there was a constant of 470 pt for this, the whole dialog
 /// wanted ~586 pt tall, and the phone's viewport is 443.1 pt. The window grew past the
 /// bottom of the screen and the **Export row went with it**, so the dialog could not be
 /// confirmed at all. The common frame now clamps the height (`dialogs/mod.rs`), which is
@@ -65,7 +65,7 @@ fn preview_h(ui: &egui::Ui) -> f32 {
 
 /// The two column widths: what is actually free, not a fixed 620 + 296.
 ///
-/// MEDIDO: the columns add up to 932 pt and the frame's own margins are 2 x (22 + 8), so
+/// MEASURED: the columns add up to 932 pt and the frame's own margins are 2 x (22 + 8), so
 /// they do not fit a 937 pt window — the settings column was clipped off the right edge.
 fn anchos(ui: &egui::Ui) -> (f32, f32) {
     let hay = ui.available_width() - GAP;

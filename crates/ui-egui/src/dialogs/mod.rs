@@ -349,7 +349,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             // "Save for Web (Legacy)" unusable in a phone: the window grew past the bottom of the
             // screen and the OK/Export row went with it, so there was no way to confirm.
             //
-            // MEDIDO, on a 2400x1080 phone in landscape: the viewport is 937.4 x 443.1 pt, and
+            // MEASURED, on a 2400x1080 phone in landscape: the viewport is 937.4 x 443.1 pt, and
             // that dialog asks for 932 pt of columns inside a frame of 2 x (22 + 8) and a
             // ~470 pt preview, so it wanted ~932 x ~586. `Save for Web` is the widest and
             // tallest dialog in the set; on a desktop window nothing ever hit this.
@@ -358,7 +358,7 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             // top of the free area by that much. It has to be given room twice: once for the
             // shift and once as clearance, or the heading ends up under the status bar.
             //
-            // MEDIDO, on the 2400x1080 phone in landscape: `content_rect()` is 418.9 pt
+            // MEASURED, on the 2400x1080 phone in landscape: `content_rect()` is 418.9 pt
             // tall after the 24.2 pt status bar, and with a single subtraction the window's
             // top lands at 34.2 pt — measured, it landed at 13.8 pt and the heading was
             // cut. With the offset counted twice the window fits top and bottom.

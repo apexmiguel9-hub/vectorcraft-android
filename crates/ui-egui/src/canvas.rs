@@ -15,12 +15,12 @@ use crate::{CacheKey, VectorcraftApp, now_ms, widgets};
 
 const RULER: f32 = 16.0;
 
-/// Contador para el log del pan de dos dedos.
+/// Rate limiter for the touch-gesture diagnostics.
 ///
-/// MEDIDO que el puerto filtra el log a `Info`, asi que un `debug` no sale —y subir el
-/// nivel llena el logcat de las miles de lineas que emite el motor—. A `info` con **un
-/// registro cada 30 frames** se lee: en el frame medido de 125 fps eso son unas 4 lineas por
-/// segundo con el dedo en la pantalla.
+/// MEASURED that the Android port filters the log at `Info`, so a `debug` never shows —
+/// and raising the level floods logcat with the thousands of lines the engine emits. At
+/// `info` with **one record every 30 frames** it stays readable: at the MEASURED 125 fps
+/// that is about 4 lines per second with a finger on the screen.
 static PAN_LOG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Screen ↔ document mapping for one frame.
@@ -437,45 +437,46 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     let view = app.view_info();
     let drag: Option<Drag> = ui.data(|d| d.get_temp(drag_id()));
 
-    // MEDIDO, y es el gesto que **no existia**: con dos dedos solo habia pellizco. En el
-    // movil eso dejaba el pan sin ninguna forma de hacerlo —ni un dedo ni dos— porque lo
-    // de mas abajo necesita boton central o la barra espaciadora.
+    // MEASURED, and this is the gesture that **did not exist**: with two fingers there
+    // was only pinch. On the phone that left panning with no way to do it at all —not one
+    // finger, not two— because the paths further down need middle button or spacebar.
     //
-    // MEDIDO del gesto, mirando el port de OpenPencil (`op-host-native`) como referencia:
-    // dos dedos panean y hacen zoom **a la vez**, que es lo de Figma, Procreate,
-    // Illustrator y Affinity. Un dedo se queda con la herramienta —dibujar, mover un objeto,
-    // recuadro— y no hay ni temporizador ni que adivinar por donde empezo el dedo. Un dedo
-    // para panear y otro para dibujar se comen el uno al otro: con pan inmediato no hay
-    // recuadro, y con recuadro inmediato no hay pan. MEDIDO en el movil, en las dos
-    // direcciones.
+    // MEASURED of the gesture, taking OpenPencil's Android port (`op-host-native`) as the
+    // reference: two fingers pan and zoom **at the same time**, which is what Figma,
+    // Procreate, Illustrator and Affinity do. One finger stays with the tool —draw, move an
+    // object, marquee— with no timer and no guessing where the finger started. One finger
+    // for panning and one for drawing eat each other: with immediate pan there is no
+    // marquee, and with immediate marquee there is no pan. MEASURED on the phone, in both
+    // directions.
     //
-    // MEDIDO de la API, leyendo `egui-0.36.2/src/input_state/touch_state.rs`:
+    // MEASURED of the API, reading `egui-0.36.2/src/input_state/touch_state.rs`:
     //
-    //     pub num_touches: usize        // >= 2, para uno solo no se crea
-    //     pub translation_delta: Vec2   // movimiento de la media, relativo al frame anterior
+    //     pub num_touches: usize        // >= 2, not created for a single finger
+    //     pub translation_delta: Vec2   // mean movement, relative to the previous frame
     //     pub zoom_delta: f32
     //
-    // O sea que el pan de dos dedos sale de `translation_delta`, y el pellizco de
-    // `zoom_delta`, que es lo que ya usaba la linea de abajo.
-    // MEDIDO, y aqui estaba la costura que faltaba: **`touch_gestures` ya existia** en las
-    // preferencias del motor, en la seccion "Devices" —es la de Illustrator— y con
-    // `touch_gestures: true` en el preset, pero **nada en el workspace la leia**. O sea que
-    // upstream ya modelaba el concepto y estaba sin implementar; esto es darle el
-    // comportamiento, no inventar un flag.
+    // So two-finger panning comes from `translation_delta`, and pinch from `zoom_delta`,
+    // which is what the line below already used.
+    // MEASURED, and here was the seam that was missing: **`touch_gestures` already
+    // existed** in the engine's preferences, under the "Devices" section —Illustrator's
+    // own —and is `true` in the preset, but **nothing in the workspace read it**. Upstream
+    // already modelled the concept and left it unimplemented; this gives it behaviour, it
+    // does not invent a flag.
     if app.session.prefs.touch_gestures
         && let Some(mt) = ui.input(egui::InputState::multi_touch)
         && mt.num_touches >= 2
         && let Some(vm) = app.view_mut()
     {
-        // MEDIDO que el desplazamiento es en **puntos de pantalla**, no de documento, asi
-        // que va por `delta_to_doc` igual que el scroll y que el pan de un dedo.
+        // MEASURED that the translation is in **screen points**, not document points, so it
+        // goes through `delta_to_doc` like scroll and one-finger pan do.
         //
-        // MEDIDO, y este log es el que hace falta antes de tocar nada mas. Se probo en el
-        // movil y el pan de dos dedos salia "mini" mientras el zoom iba bien, y la cadena
-        // entera de egui es correcta (`input_state/touch_state.rs:220`,
-        // `translation_delta = current.avg_pos - previous.avg_pos`, y `previous` se anula
-        // al anadir un dedo, `:175`). O sea que el fallo, si lo hay, esta entre la entrega
-        // de eventos y aqui, y sin ver los numeros no se puede saber cual de las dos.
+        // MEASURED, and this log is the one needed before touching anything else. Tested
+        // on the phone, two-finger pan came out "mini" while zoom was fine, and the whole
+        // egui chain is correct (`input_state/touch_state.rs:220`,
+        // `translation_delta = current.avg_pos - previous.avg_pos`, and `previous` is
+        // cleared when a finger is added, `:175`). So if there is a fault it lies between
+        // event delivery and here, and without the numbers there is no telling which of the
+        // two it is.
         if PAN_LOG.load(Ordering::Relaxed) == 0 {
             PAN_LOG.store(30, Ordering::Relaxed);
             log::info!(
