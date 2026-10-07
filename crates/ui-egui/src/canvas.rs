@@ -1,6 +1,8 @@
 //! The document canvas: rendering, rulers, navigation, pointer routing to tools and on-canvas
 //! selection visuals (bounding box, anchors, handles, smart-guide style labels).
 
+use std::sync::atomic::Ordering;
+
 use egui::{Color32, CornerRadius, Pos2, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::json;
 use vectorcraft_doc::{Node, NodeKind, Unit};
@@ -12,6 +14,14 @@ use crate::theme::{self, Tokens};
 use crate::{CacheKey, VectorcraftApp, now_ms, widgets};
 
 const RULER: f32 = 16.0;
+
+/// Contador para el log del pan de dos dedos.
+///
+/// MEDIDO que el puerto filtra el log a `Info`, asi que un `debug` no sale —y subir el
+/// nivel llena el logcat de las miles de lineas que emite el motor—. A `info` con **un
+/// registro cada 30 frames** se lee: en el frame medido de 125 fps eso son unas 4 lineas por
+/// segundo con el dedo en la pantalla.
+static PAN_LOG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Screen ↔ document mapping for one frame.
 #[derive(Clone, Copy, Debug)]
@@ -423,6 +433,26 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     {
         // MEDIDO que el desplazamiento es en **puntos de pantalla**, no de documento, asi
         // que va por `delta_to_doc` igual que el scroll y que el pan de un dedo.
+        //
+        // MEDIDO, y este log es el que hace falta antes de tocar nada mas. Se probo en el
+        // movil y el pan de dos dedos salia "mini" mientras el zoom iba bien, y la cadena
+        // entera de egui es correcta (`input_state/touch_state.rs:220`,
+        // `translation_delta = current.avg_pos - previous.avg_pos`, y `previous` se anula
+        // al anadir un dedo, `:175`). O sea que el fallo, si lo hay, esta entre la entrega
+        // de eventos y aqui, y sin ver los numeros no se puede saber cual de las dos.
+        if PAN_LOG.load(Ordering::Relaxed) == 0 {
+            PAN_LOG.store(30, Ordering::Relaxed);
+            log::info!(
+                "2 dedos: n={} trans={:?} zoom={:.4} centro={:?} -> delta_doc={:?}",
+                mt.num_touches,
+                mt.translation_delta,
+                mt.zoom_delta,
+                (vm.center.x, vm.center.y),
+                xf.delta_to_doc(mt.translation_delta),
+            );
+        } else {
+            PAN_LOG.fetch_sub(1, Ordering::Relaxed);
+        }
         let d = xf.delta_to_doc(mt.translation_delta);
         vm.center -= d;
     }
