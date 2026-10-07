@@ -177,6 +177,33 @@ fn drag_selects_and_overlay_highlights() {
 }
 
 #[test]
+fn a_drag_across_type_not_being_edited_selects_its_text() {
+    let (d, id) = doc_with_text("Select me please");
+    let mut tool = TypeTool::new("type");
+    let (sel, p) = (Selection::default(), paint());
+    let c = cx(&d, &sel, &p);
+    let t = TypeTool::text(&c, id).unwrap().clone();
+    let lay = vectorcraft_text::layout(FontDb::global(), &t);
+    let pt = |b: usize| {
+        let (a, bb) = vectorcraft_text::caret_position(&lay, b);
+        t.xf * a.midpoint(bb)
+    };
+    let (a, b) = (pt(7), pt(9));
+    // The press starts editing the type and the drag selects, in one gesture.
+    let out = tool.pointer(&c, &PointerEvent::new(PointerKind::Down, a.x + 0.1, a.y));
+    assert!(out.contains(&Action::Exec("select.set".into(), json!({"ids": [id.0]}))));
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Drag, b.x + 0.1, b.y));
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Up, b.x + 0.1, b.y));
+    assert_eq!(tool.editing, Some(id));
+    assert_eq!(tool.sel(), (7, 9));
+    // A plain click still just places the caret.
+    let mut tool = TypeTool::new("type");
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Down, a.x + 0.1, a.y));
+    tool.pointer(&c, &PointerEvent::new(PointerKind::Up, a.x + 0.1, a.y));
+    assert_eq!((tool.editing, tool.sel()), (Some(id), (7, 7)));
+}
+
+#[test]
 fn select_all_and_styled_paste() {
     let (d, _, mut tool) = editing("abc");
     tool.set_option("selectAll", &json!(true));
@@ -217,4 +244,78 @@ fn area_and_path_tools_convert_clicked_paths() {
     tool.pointer(&c, &PointerEvent::new(PointerKind::Down, 150.0, 100.0));
     let acts = tool.pointer(&c, &PointerEvent::new(PointerKind::Up, 150.0, 100.0));
     assert!(acts.iter().any(|a| matches!(a, Action::Exec(cmd, p) if cmd == "text.createInPath" && p["mode"] == "onPath")), "{acts:?}");
+}
+
+#[test]
+fn vertical_tools_preserve_their_ids_and_create_vertical_text() {
+    for id in ["verticalType", "verticalAreaType", "verticalTypeOnPath"] {
+        let tool = TypeTool::new(id);
+        assert_eq!(tool.id(), id);
+        assert!(tool.vertical);
+    }
+}
+
+#[test]
+fn ime_ranges_convert_characters_to_bytes() {
+    assert_eq!(char_range_to_bytes("ががく", 1..3), Some(3..9));
+    assert_eq!(char_range_to_bytes("ががく", 3..3), Some(9..9));
+    assert_eq!(char_range_to_bytes("a雅b", 1..2), Some(1..4));
+    assert_eq!(char_range_to_bytes("ががく", 2..4), None, "past the end");
+    #[allow(clippy::reversed_empty_ranges)]
+    let backwards = 2..1;
+    assert_eq!(char_range_to_bytes("ががく", backwards), None, "backwards");
+}
+
+#[test]
+fn marked_text_is_underlined_with_the_converting_clause_thick() {
+    let (mut d, id, mut tool) = editing("曲");
+    let snap = d.clone();
+    let (sel, p) = (Selection::default(), paint());
+    tool.caret = 3;
+    tool.anchor = 3;
+    let acts = tool.ime_preedit(&cx(&d, &sel, &p), "雅楽演奏", Some(2..4));
+    apply(&mut d, &snap, &acts);
+    let NodeKind::Text(t) = &d.node(id).unwrap().kind else { panic!() };
+    assert_eq!(t.plain_text(), "曲雅楽演奏");
+    assert_eq!(tool.preedit, Some(Preedit { range: 3..15, active: Some(6..12) }));
+    let widths: Vec<f32> = tool
+        .overlays(&cx(&d, &sel, &p))
+        .iter()
+        .filter_map(|o| match o {
+            Overlay::Path { width, .. } => Some(*width),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(widths, vec![1.0, 2.5], "a thin underline, then the thick one under 演奏");
+    // The candidate window follows the converting clause.
+    let (top, _) = tool.ime_caret(&cx(&d, &sel, &p)).unwrap();
+    let lay = vectorcraft_text::layout(FontDb::global(), t);
+    let (at, _) = vectorcraft_text::caret_position(&lay, 9);
+    assert!((top - t.xf * at).hypot() < 1e-6);
+    // Keys wait for the IME; a commit replaces the marked text.
+    assert!(key(&mut tool, &d, ToolKey::Backspace, Mods::default()).is_empty());
+    let acts = tool.text_input(&cx(&d, &sel, &p), "雅楽演奏会");
+    apply(&mut d, &snap, &acts);
+    let NodeKind::Text(t) = &d.node(id).unwrap().kind else { panic!() };
+    assert_eq!(t.plain_text(), "曲雅楽演奏会");
+    assert!(!tool.composing());
+}
+
+#[test]
+fn arrows_follow_the_columns_of_vertical_type() {
+    let (mut d, id) = doc_with_text("§§§\n§§§");
+    if let Some(NodeKind::Text(t)) = d.node_mut(id).map(|n| &mut n.kind) {
+        t.vertical = true;
+    }
+    let mut tool = TypeTool::new("type");
+    tool.start_editing(id, 0);
+    let s = "§".len();
+    key(&mut tool, &d, ToolKey::Down, Mods::default());
+    assert_eq!(tool.caret, s, "↓ goes down the column to the next character");
+    key(&mut tool, &d, ToolKey::Left, Mods::default());
+    assert_eq!(tool.caret, "§§§\n§".len(), "← goes on to the next column, keeping the place in it");
+    key(&mut tool, &d, ToolKey::Right, Mods::default());
+    assert_eq!(tool.caret, s, "→ comes back");
+    key(&mut tool, &d, ToolKey::Up, Mods::default());
+    assert_eq!(tool.caret, 0);
 }

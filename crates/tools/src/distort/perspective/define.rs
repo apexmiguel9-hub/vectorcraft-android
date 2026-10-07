@@ -38,6 +38,11 @@ pub const BUILTINS: [(&str, u8, f64); 8] = [
     ("[3P-Low View]", 3, 0.66),
 ];
 
+/// Is `name` a built-in preset's (any case)?
+pub fn is_builtin(name: &str) -> bool {
+    BUILTINS.iter().any(|b| b.0.eq_ignore_ascii_case(name.trim()))
+}
+
 /// The first artboard of `doc` (a Letter page without one).
 pub fn first_artboard(doc: &Document) -> Rect {
     doc.artboards.first().map_or(LETTER, |a| a.rect)
@@ -317,6 +322,9 @@ impl PerspectiveGrid {
         }
         if !(0.0..=100.0).contains(&self.opacity) {
             return Err("opacity must be 0–100".into());
+        }
+        if self.extent_right.is_some_and(|e| !(e > 0.0 && e <= MAX_LEN)) {
+            return Err("extentRight must be positive".into());
         }
         Ok(())
     }

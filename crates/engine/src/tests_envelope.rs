@@ -96,13 +96,16 @@ fn reset_with_warp_and_mesh_switch_the_kind_and_keep_the_content() {
     assert!(s.execute("object.envelope.resetWithWarp", &json!({"style": "nope"})).is_err());
     // Back to a mesh that keeps the arch's shape: the top middle point is where the warp put it.
     s.execute("object.envelope.resetWithWarp", &json!({"style": "arch", "bend": 50, "horizontal": true})).unwrap();
-    let top = live::envelope_surface(&node(&s, e).children().unwrap().clone(), &kind(&s, e), 2, 2, vectorcraft_color::Color::BLACK).unwrap();
+    let top = live::EnvelopeMap::of(&node(&s, e)).unwrap().surface_mesh(2, 2, vectorcraft_color::Color::BLACK);
     s.execute("object.envelope.resetWithMesh", &json!({"rows": 2, "cols": 2})).unwrap();
-    let EnvelopeKind::Mesh { rows: 2, cols: 2, points } = kind(&s, e) else { panic!("{:?}", kind(&s, e)) };
+    let EnvelopeKind::Mesh { rows: 2, cols: 2, points, .. } = kind(&s, e) else { panic!("{:?}", kind(&s, e)) };
     assert!(points[1].distance(top.points[1].p) < 1e-9 && points[1].y < 99.0, "{:?}", points[1]);
     // Without Maintain Envelope Shape: a flat grid over the content.
     s.execute("object.envelope.resetWithMesh", &json!({"rows": 1, "cols": 1, "maintainShape": false})).unwrap();
-    assert_eq!(kind(&s, e), EnvelopeKind::Mesh { rows: 1, cols: 1, points: live::grid_points(Rect::new(100.0, 100.0, 300.0, 200.0), 1, 1) });
+    assert_eq!(
+        kind(&s, e),
+        EnvelopeKind::Mesh { rows: 1, cols: 1, points: live::grid_points(Rect::new(100.0, 100.0, 300.0, 200.0), 1, 1), handles: vec![] }
+    );
     assert!(s.execute("object.envelope.resetWithMesh", &json!({"rows": 0})).is_err());
     // One undo step per reset.
     s.execute("edit.undo", &json!({})).unwrap();
@@ -218,8 +221,13 @@ fn enveloped_type_exports_distorted_in_every_format() {
     let t = id_of(&s.execute("text.create", &json!({"x": 100, "y": 200, "text": "Envelope", "size": 48})).unwrap());
     sel(&mut s, &[t]);
     s.execute("object.envelope.makeWithWarp", &json!({"style": "arch", "bend": 0})).unwrap();
-    let export =
-        |s: &mut Session, format: &str| s.execute("document.export", &json!({"format": format})).unwrap()["dataBase64"].as_str().unwrap().to_string();
+    // The export's bytes without its time stamps (EPS and PDF date their files to the second).
+    let export = |s: &mut Session, format: &str| -> Vec<u8> {
+        let data = s.execute("document.export", &json!({"format": format})).unwrap()["dataBase64"].as_str().unwrap().to_string();
+        let bytes = vectorcraft_format::base64_decode(&data).unwrap();
+        let dated = |line: &&[u8]| line.windows(12).any(|w| w == b"CreationDate") || line.windows(7).any(|w| w == b"ModDate");
+        bytes.split(|b| *b == b'\n').filter(|l| !dated(l)).flat_map(|l| l.iter().copied().chain(*b"\n")).collect()
+    };
     for format in ["svg", "pdf", "eps", "emf", "dxf"] {
         s.execute("object.envelope.options", &json!({"bend": 0})).unwrap();
         let flat = export(&mut s, format);
@@ -227,7 +235,7 @@ fn enveloped_type_exports_distorted_in_every_format() {
         s.execute("object.envelope.options", &json!({"bend": 80})).unwrap();
         assert_ne!(export(&mut s, format), flat, "{format}: the bend shows in the export");
     }
-    let svg = String::from_utf8(vectorcraft_format::base64_decode(&export(&mut s, "svg")).unwrap()).unwrap();
+    let svg = String::from_utf8(export(&mut s, "svg")).unwrap();
     assert!(!svg.contains("<text"), "type in an envelope exports as its distorted outlines");
 }
 

@@ -12,7 +12,11 @@
 //! `text.editRange` (the changed span, with its styled runs) against the session snapshot.
 //! Styling a selected range goes through `text.setRangeStyle` (the Character panel reads the
 //! selection from [`Tool::options`]).
+//!
+//! IME: the marked text of a composition is part of the typing session (so it lays out in place),
+//! underlined, until the IME commits it (it then goes through [`Tool::text_input`]) or clears it.
 
+use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
@@ -38,8 +42,18 @@ struct Typing {
     cur: Vec<TextRun>,
 }
 
+/// IME marked text inside the typing session, not yet committed.
+#[derive(Clone, Debug, PartialEq)]
+struct Preedit {
+    /// Byte range of the marked text in the session's runs.
+    range: Range<usize>,
+    /// The clause being converted, in bytes relative to `range.start` (empty: the IME's cursor).
+    active: Option<Range<usize>>,
+}
+
 #[derive(Default)]
 pub struct TypeTool {
+    vertical: bool,
     mode: Mode,
     /// Text object being edited.
     editing: Option<NodeId>,
@@ -51,6 +65,7 @@ pub struct TypeTool {
     /// Horizontal position kept by Up/Down (text space).
     goal_x: Option<f64>,
     typing: Option<Typing>,
+    preedit: Option<Preedit>,
     press: Option<Point>,
     drag: Option<Point>,
     /// The press landed in the edited text: dragging selects.
@@ -65,11 +80,11 @@ pub struct TypeTool {
 impl TypeTool {
     pub fn new(id: &str) -> Self {
         let mode = match id {
-            "areaType" => Mode::Area,
-            "typeOnPath" => Mode::OnPath,
+            "areaType" | "verticalAreaType" => Mode::Area,
+            "typeOnPath" | "verticalTypeOnPath" => Mode::OnPath,
             _ => Mode::Type,
         };
-        Self { mode, ..Default::default() }
+        Self { mode, vertical: id.starts_with("vertical"), ..Default::default() }
     }
 
     fn text<'a>(cx: &'a ToolContext, id: NodeId) -> Option<&'a TextObject> {
@@ -112,8 +127,10 @@ impl TypeTool {
         (self.caret.min(self.anchor), self.caret.max(self.anchor))
     }
 
-    /// End the typing session (one undo step).
+    /// End the typing session (one undo step). Marked text left by an IME stays as typed (as
+    /// clicking away from a composition does in macOS text views); the UI interrupts the IME.
     fn commit(&mut self) -> Vec<Action> {
+        self.preedit = None;
         if self.typing.take().is_some() { vec![Action::Commit] } else { vec![] }
     }
 
@@ -186,6 +203,7 @@ impl TypeTool {
         self.anchor = caret;
         self.goal_x = None;
         self.typing = None;
+        self.preedit = None;
     }
 
     /// Byte under `p` in the edited text if `p` is inside it (frame, path band or layout bounds).
@@ -217,35 +235,46 @@ impl TypeTool {
         }
     }
 
-    fn on_up(&mut self, cx: &ToolContext, start: Point) -> Vec<Action> {
+    /// Start editing the type under `p` with the caret there → the actions (ending the previous
+    /// edit, selecting the type); None when no type is under `p`.
+    fn edit_at(&mut self, cx: &ToolContext, p: Point) -> Option<Vec<Action>> {
+        let h = hit_test(cx.doc, p, cx.hit_options())?;
+        let Some(NodeKind::Text(t)) = cx.doc.node(h.leaf).map(|n| &n.kind) else { return None };
+        let lay = self.layout(t);
+        let byte = vectorcraft_text::hit_byte(&lay, t.xf.inverse() * p);
         let mut out = self.finish(cx);
+        self.start_editing(h.leaf, byte);
+        self.clicks = (Some(p), 1);
+        out.push(Action::Exec("select.set".into(), json!({"ids": [h.leaf.0]})));
+        Some(out)
+    }
+
+    fn on_up(&mut self, cx: &ToolContext, start: Point) -> Vec<Action> {
         // Click into existing text: place the caret.
-        if let Some(h) = hit_test(cx.doc, start, cx.hit_options())
-            && let Some(NodeKind::Text(t)) = cx.doc.node(h.leaf).map(|n| &n.kind)
-        {
-            let lay = self.layout(t);
-            let byte = vectorcraft_text::hit_byte(&lay, t.xf.inverse() * start);
-            self.start_editing(h.leaf, byte);
-            self.clicks = (Some(start), 1);
-            out.push(Action::Exec("select.set".into(), json!({"ids": [h.leaf.0]})));
+        if let Some(out) = self.edit_at(cx, start) {
             return out;
         }
+        let mut out = self.finish(cx);
         let drag = self.drag.take();
         // Area Type / Type on a Path: click a path.
         if self.mode != Mode::Type && drag.is_none() {
             let on_path = self.mode == Mode::OnPath;
             if let Some(pid) = Self::path_at(cx, start, !on_path) {
                 let mode = if on_path { "onPath" } else { "area" };
-                out.push(Action::Exec("text.createInPath".into(), json!({"path": pid.0, "mode": mode, "text": "", "at": [start.x, start.y]})));
+                out.push(Action::Exec(
+                    "text.createInPath".into(),
+                    json!({"path": pid.0, "mode": mode, "text": "", "at": [start.x, start.y], "vertical": self.vertical}),
+                ));
                 out.push(Action::Notify("text.editNew".into()));
                 return out;
             }
         }
         let area = drag.map(|d| Rect::from_points(start, d)).filter(|r| r.width() > cx.tol(6.0) && r.height() > cx.tol(6.0));
-        let params = match area {
-            Some(r) => json!({"x": r.x0, "y": r.y0 + 12.0, "text": "", "area": {"width": r.width(), "height": r.height()}}),
+        let mut params = match area {
+            Some(r) => json!({"x": r.x0, "y": r.y0, "text": "", "area": {"width": r.width(), "height": r.height()}}),
             None => json!({"x": start.x, "y": start.y, "text": ""}),
         };
+        params["vertical"] = json!(self.vertical);
         out.push(Action::Exec("text.create".into(), params));
         out.push(Action::Notify("text.editNew".into()));
         out
@@ -272,6 +301,14 @@ impl TypeTool {
     }
 }
 
+/// Byte range in `s` of the characters `r` (IME ranges count characters; carets count bytes).
+/// `None` when `r` runs past the end of `s` or backwards.
+fn char_range_to_bytes(s: &str, r: Range<usize>) -> Option<Range<usize>> {
+    let byte = |c: usize| if c == s.chars().count() { Some(s.len()) } else { s.char_indices().nth(c).map(|(i, _)| i) };
+    let (a, b) = (byte(r.start)?, byte(r.end)?);
+    (a <= b).then_some(a..b)
+}
+
 /// Lengths of the common prefix and suffix of `a` and `b` (on char boundaries, not overlapping).
 fn common_affixes(a: &str, b: &str) -> (usize, usize) {
     let mut p = 0;
@@ -294,10 +331,13 @@ fn common_affixes(a: &str, b: &str) -> (usize, usize) {
 
 impl Tool for TypeTool {
     fn id(&self) -> &'static str {
-        match self.mode {
-            Mode::Type => "type",
-            Mode::Area => "areaType",
-            Mode::OnPath => "typeOnPath",
+        match (self.mode, self.vertical) {
+            (Mode::Type, false) => "type",
+            (Mode::Type, true) => "verticalType",
+            (Mode::Area, false) => "areaType",
+            (Mode::Area, true) => "verticalAreaType",
+            (Mode::OnPath, false) => "typeOnPath",
+            (Mode::OnPath, true) => "verticalTypeOnPath",
         }
     }
     fn busy(&self) -> bool {
@@ -324,6 +364,12 @@ impl Tool for TypeTool {
                     return out;
                 }
                 self.clicks = (None, 0);
+                // A press on other type edits it from there, so a drag selects its text at once,
+                // as it does in the type being edited.
+                if let Some(out) = self.edit_at(cx, ev.pos) {
+                    self.selecting = true;
+                    return out;
+                }
                 self.press = Some(ev.pos);
                 self.drag = None;
                 vec![]
@@ -363,6 +409,15 @@ impl Tool for TypeTool {
             return vec![];
         }
         let s: String = s.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).map(|c| if c == '\r' { '\n' } else { c }).collect();
+        // An IME commit replaces its marked text (an empty commit just removes it).
+        let committing = self.preedit.is_some();
+        if committing && s.is_empty() {
+            return self.ime_preedit(cx, "", None);
+        }
+        if let Some(p) = self.preedit.take() {
+            self.anchor = p.range.start;
+            self.caret = p.range.end;
+        }
         if s.is_empty() {
             return vec![];
         }
@@ -379,13 +434,17 @@ impl Tool for TypeTool {
         self.clicks = (None, 0);
         // Pasting what we copied keeps its formatting (unless pasted text is kept plain).
         let clip: String = self.clipboard.iter().map(|r| r.text.as_str()).collect();
-        if s.len() > 1 && s == clip && !cx.paste_plain_text {
+        if !committing && s.len() > 1 && s == clip && !cx.paste_plain_text {
             let runs = self.clipboard.clone();
             return self.replace(cx, "", Some(runs));
         }
         self.replace(cx, &s, None)
     }
     fn key(&mut self, cx: &ToolContext, key: ToolKey, mods: Mods) -> Vec<Action> {
+        // The IME owns the keys while it composes (the UI doesn't send them; this is a guard).
+        if self.preedit.is_some() {
+            return vec![];
+        }
         let Some(t) = self.current(cx) else {
             self.editing = None;
             return vec![];
@@ -397,6 +456,17 @@ impl Tool for TypeTool {
         let (a, b) = self.sel();
         let word = mods.cmd || mods.alt;
         let lay = self.layout(&t);
+        let key = if lay.vertical {
+            match key {
+                ToolKey::Up => ToolKey::Left,
+                ToolKey::Down => ToolKey::Right,
+                ToolKey::Right => ToolKey::Up,
+                ToolKey::Left => ToolKey::Down,
+                other => other,
+            }
+        } else {
+            key
+        };
         let vertical = matches!(key, ToolKey::Up | ToolKey::Down);
         if !vertical {
             self.goal_x = None;
@@ -437,7 +507,7 @@ impl Tool for TypeTool {
             ToolKey::Up | ToolKey::Down => {
                 let d = if key == ToolKey::Up { -1 } else { 1 };
                 let from = if a != b && !mods.shift { if d < 0 { a } else { b } } else { self.caret };
-                let x = self.goal_x.unwrap_or_else(|| vectorcraft_text::caret_position(&lay, from).0.x);
+                let x = self.goal_x.unwrap_or_else(|| lay.logical_point(vectorcraft_text::caret_position(&lay, from).0).x);
                 let to = if mods.cmd {
                     // Cmd+Up/Down: paragraph start / end.
                     let p = edit::paragraph_at(&text, from);
@@ -466,6 +536,51 @@ impl Tool for TypeTool {
             _ => vec![],
         }
     }
+    fn ime_preedit(&mut self, cx: &ToolContext, text: &str, active_chars: Option<Range<usize>>) -> Vec<Action> {
+        if self.editing.is_none() {
+            return vec![];
+        }
+        // A clear with nothing marked (some integrations send one when the IME is enabled) must
+        // not delete the selection.
+        if text.is_empty() && self.preedit.is_none() {
+            return vec![];
+        }
+        let text: String = text.chars().filter(|c| !c.is_control()).collect();
+        // The new marked text replaces the previous one, or the selection when it starts.
+        if let Some(p) = self.preedit.take() {
+            self.anchor = p.range.start;
+            self.caret = p.range.end;
+        }
+        self.clicks = (None, 0);
+        let mut out = self.replace(cx, &text, None);
+        if text.is_empty() {
+            // Cancelled before anything else was typed: no empty undo step.
+            if self.typing.as_ref().is_some_and(|ty| ty.cur == ty.base) {
+                self.typing = None;
+                out.push(Action::Cancel);
+            }
+            return out;
+        }
+        let end = self.caret;
+        let start = end.saturating_sub(text.len());
+        self.preedit = Some(Preedit { range: start..end, active: active_chars.and_then(|r| char_range_to_bytes(&text, r)) });
+        out
+    }
+    fn composing(&self) -> bool {
+        self.preedit.is_some()
+    }
+    fn ime_caret(&self, cx: &ToolContext) -> Option<(Point, Point)> {
+        let t = self.current(cx)?;
+        let lay = self.layout(&t);
+        let len = t.plain_text().len();
+        // The candidate window follows the clause being converted, else the caret.
+        let at = match &self.preedit {
+            Some(p) => p.range.start + p.active.as_ref().map_or(0, |r| r.start),
+            None => self.caret.min(self.anchor),
+        };
+        let (a, b) = vectorcraft_text::caret_position(&lay, at.min(len));
+        Some((t.xf * a, t.xf * b))
+    }
     fn deactivate(&mut self, cx: &ToolContext) -> Vec<Action> {
         self.finish(cx)
     }
@@ -491,13 +606,14 @@ impl Tool for TypeTool {
             self.fresh = Self::text(cx, id).filter(|t| matches!(t.kind, TextKind::Point)).map(|_| id);
         }
     }
-    /// `{editing, start, end, caret, anchor, typing}` — the Character panel styles `start..end`.
+    /// `{editing, start, end, caret, anchor, typing, composing}` — the Character panel styles
+    /// `start..end`.
     fn options(&self) -> Value {
         match self.editing {
             Some(id) => {
                 // Offsets may exceed the text after Select All; callers clamp to the text length.
                 let (a, b) = self.sel();
-                json!({"editing": id.0, "start": a, "end": b, "caret": self.caret, "anchor": self.anchor, "typing": self.typing.is_some()})
+                json!({"editing": id.0, "start": a, "end": b, "caret": self.caret, "anchor": self.anchor, "typing": self.typing.is_some(), "composing": self.preedit.is_some()})
             }
             None => json!({"editing": null}),
         }
@@ -506,7 +622,10 @@ impl Tool for TypeTool {
     /// `commitTyping` (the caller commits the engine interaction).
     fn set_option(&mut self, key: &str, v: &Value) {
         match key {
-            "commitTyping" | "endTyping" => self.typing = None,
+            "commitTyping" | "endTyping" => {
+                self.typing = None;
+                self.preedit = None;
+            }
             "selectAll" if self.editing.is_some() => {
                 self.anchor = 0;
                 self.caret = usize::MAX / 4;
@@ -525,6 +644,7 @@ impl Tool for TypeTool {
             }
             "stopEditing" => {
                 self.typing = None;
+                self.preedit = None;
                 self.editing = None;
             }
             _ => {}
@@ -559,7 +679,24 @@ impl Tool for TypeTool {
             o.push(Overlay::Path { path: f, color: [79, 128, 255], width: 1.0, dashed: false });
         }
         let (a, b) = (self.caret.min(self.anchor).min(len), self.caret.max(self.anchor).min(len));
-        if a == b {
+        if let Some(pe) = &self.preedit {
+            // Marked text: a thin underline, a thick one under the clause being converted.
+            let under = |o: &mut Vec<Overlay>, r: Range<usize>, width: f32| {
+                for q in vectorcraft_text::selection_quads(&lay, r.start.min(len), r.end.min(len)) {
+                    let (l, rr) = (t.xf * q[3], t.xf * q[2]);
+                    o.push(Overlay::Path { path: vectorcraft_geom::Line::new(l, rr).to_path(0.1), color: [0, 0, 0], width, dashed: false });
+                }
+            };
+            under(&mut o, pe.range.clone(), 1.0);
+            match &pe.active {
+                Some(r) if !r.is_empty() => under(&mut o, pe.range.start + r.start..pe.range.start + r.end, 2.5),
+                _ => {
+                    let at = pe.range.start + pe.active.as_ref().map_or(pe.range.len(), |r| r.start);
+                    let (p, q) = vectorcraft_text::caret_position(&lay, at.min(len));
+                    o.push(Overlay::Line { a: t.xf * p, b: t.xf * q, color: [0, 0, 0], dashed: false });
+                }
+            }
+        } else if a == b {
             let (p, q) = vectorcraft_text::caret_position(&lay, self.caret.min(len));
             o.push(Overlay::Line { a: t.xf * p, b: t.xf * q, color: [0, 0, 0], dashed: false });
         } else {

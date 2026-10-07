@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! vectorcraft-cli mcp [--connect 127.0.0.1:7979 | --headless]
-//! vectorcraft-cli run [--in FILE] [--cmd id [--params '{json}']]... [--export out.svg|.png|.pdf|.jpg|.webp|.vectorcraft]... [--scale 2]
+//! vectorcraft-cli run [--in FILE] [--cmd id [--params '{json}']]... [--export out.svg]... [--scale 2]
 //! vectorcraft-cli commands
 //! vectorcraft-cli convert IN OUT [--scale 2] [--artboard 0 | --range 1-3,5] [--outline-text]
 //! vectorcraft-cli info FILE
@@ -14,10 +14,40 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+/// `println!` / `print!` that end the program quietly when stdout is closed
+/// (`vectorcraft-cli commands | head`) instead of panicking with "failed printing to stdout:
+/// Broken pipe (os error 32)".
+macro_rules! outln {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        if let Err(e) = writeln!(std::io::stdout(), $($arg)*) {
+            $crate::stdout_failed(e);
+        }
+    }};
+}
+macro_rules! out {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        if let Err(e) = write!(std::io::stdout(), $($arg)*) {
+            $crate::stdout_failed(e);
+        }
+    }};
+}
+
 mod perf;
 
 use serde_json::{Value, json};
 use vectorcraft_mcp::{Backend, DEFAULT_ADDR, Headless, Remote, Server};
+
+/// stdout went away. A reader that stopped early (a closed pipe) ends the program quietly, as
+/// ripgrep does; any other write error is reported.
+fn stdout_failed(e: std::io::Error) -> ! {
+    if e.kind() == std::io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    eprintln!("vectorcraft-cli: can't write to stdout: {e}");
+    std::process::exit(1);
+}
 
 const USAGE: &str = "\
 vectorcraft-cli — VectorCraft automation
@@ -29,16 +59,17 @@ USAGE:
 
   vectorcraft-cli run [--in FILE] [--cmd ID [--params JSON]]... [--export FILE]... [--scale N]
       Headless batch: open FILE (any readable format) or start a new document, run commands in
-      order, export (.svg, .png, .pdf, .jpg, .webp, .vectorcraft by extension). Prints one JSON result per step.
+      order, export each FILE in the format its extension picks (see Writable formats). Prints one
+      JSON result per step.
 
   vectorcraft-cli commands
       Print the command catalogue as JSON.
 
   vectorcraft-cli convert IN OUT [--scale N] [--artboard I | --range R] [--outline-text]
-      Open IN (any readable format) and export OUT by extension (.svg, .pdf, .png, .jpg, .webp,
-      .vectorcraft). --artboard is 0-based, --range 1-based (\"1-3,5\"); a PDF gets every artboard
-      unless one of them is given, the other formats the first. Live effects are kept;
-      --outline-text writes SVG text as paths.
+      Open IN (any readable format) and export OUT in the format its extension picks (see Writable
+      formats). --artboard is 0-based, --range 1-based (\"1-3,5\"); a PDF gets every artboard
+      unless one of them is given, EPS the bounds of the art, the other formats the first artboard.
+      Live effects are kept; --outline-text writes SVG text as paths.
 
   vectorcraft-cli info FILE
       Print a JSON summary: title, colour mode, units, artboards, object counts by kind, fonts.
@@ -52,9 +83,10 @@ USAGE:
       synthetic N-path document (default 50000). Exits non-zero if a budget is exceeded.
 ";
 
-/// The usage text plus the formats `document.open` reads.
+/// The usage text plus the formats `document.open` reads and `document.export` writes.
 fn usage() -> String {
-    format!("{USAGE}\nReadable formats: .{}\n", vectorcraft_engine::cmd::fileio::OPEN_EXTS.join(", ."))
+    use vectorcraft_engine::cmd::fileio::{OPEN_EXTS, export_extensions};
+    format!("{USAGE}\nReadable formats: .{}\nWritable formats: .{}\n", OPEN_EXTS.join(", ."), export_extensions().join(", ."))
 }
 
 fn main() -> ExitCode {
@@ -68,11 +100,11 @@ fn main() -> ExitCode {
         Some("bench") => bench(&args[1..]),
         Some("perf") => perf::run(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
-            print!("{}", usage());
+            out!("{}", usage());
             Ok(())
         }
         Some("-V" | "--version") => {
-            println!("vectorcraft-cli {}", env!("CARGO_PKG_VERSION"));
+            outln!("vectorcraft-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some(other) => Err(format!("unknown subcommand `{other}`\n\n{}", usage())),
@@ -112,6 +144,9 @@ fn mcp(args: &[String]) -> Result<(), String> {
         }
     };
     eprintln!("vectorcraft-cli: MCP server on stdio ({})", backend.describe());
+    // The binary owns the logger, not the library: installing one here keeps an embedder that
+    // uses `vectorcraft_mcp` free to bring its own. Silent until a client sends logging/setLevel.
+    vectorcraft_mcp::logging::install();
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     Server::new(backend).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
@@ -120,7 +155,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
 fn commands() -> Result<(), String> {
     let mut h = Headless::new();
     let v = h.call("engine.commands", json!({}))?;
-    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    outln!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
     Ok(())
 }
 
@@ -146,7 +181,7 @@ fn convert(args: &[String]) -> Result<(), String> {
             json!({"command": "document.export", "params": {"path": output, "scale": scale, "artboard": artboard, "range": range, "outlineText": outline_text}}),
         )
         .map_err(|e| format!("export {output}: {e}"))?;
-    println!("{r}");
+    outln!("{r}");
     Ok(())
 }
 
@@ -162,7 +197,7 @@ fn info(args: &[String]) -> Result<(), String> {
     let artboards: Vec<Value> =
         doc.artboards.iter().map(|a| json!({"name": a.name, "rect": [a.rect.x0, a.rect.y0, a.rect.width(), a.rect.height()]})).collect();
     let v = json!({"file": file, "info": base, "artboards": artboards, "kinds": kinds, "fonts": fonts});
-    println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    outln!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
     Ok(())
 }
 
@@ -252,7 +287,7 @@ fn bench(args: &[String]) -> Result<(), String> {
         * vectorcraft_geom::Affine::scale(z)
         * vectorcraft_geom::Affine::translate(-b.center().to_vec2());
     let opts = vectorcraft_render::RenderOptions::default();
-    println!("{file}: {} nodes, {w}x{h}", doc.layers.iter().map(|l| l.count()).sum::<usize>());
+    outln!("{file}: {} nodes, {w}x{h}", doc.layers.iter().map(|l| l.count()).sum::<usize>());
     for threads in [vectorcraft_render::default_threads(), 0] {
         let mut r = vectorcraft_render::Renderer::new();
         r.threads = threads;
@@ -261,7 +296,7 @@ fn bench(args: &[String]) -> Result<(), String> {
         for _ in 0..iters {
             r.render(&doc, w, h, view, &opts);
         }
-        println!(
+        outln!(
             "  threads {threads}: {:.1} ms/frame (drawn {}, culled {})",
             t.elapsed().as_secs_f64() * 1000.0 / iters as f64,
             r.stats.drawn,

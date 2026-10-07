@@ -10,6 +10,7 @@ use muda::accelerator::Accelerator;
 use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use serde_json::Value;
 use vectorcraft_ui_egui::VectorcraftApp;
+use vectorcraft_ui_egui::i18n::{self, Lang, t};
 use vectorcraft_ui_egui::menus::{self, Item};
 
 enum Handle {
@@ -27,6 +28,8 @@ pub struct NativeMenu {
     slots: usize,
     /// Plug-in registry revision the Plug-ins submenus were built for.
     plugins: u64,
+    /// The language the labels were built in (a change rebuilds the menu).
+    language: Lang,
 }
 
 /// Accelerator for a shortcut like "Cmd+Shift+]" (modifier-less shortcuts stay in the app so they
@@ -47,7 +50,7 @@ impl NativeMenu {
         let mut items = HashMap::new();
         let mut counter = 0usize;
         for (title, entries) in menus::menu_tree() {
-            let sub = Submenu::new(title, true);
+            let sub = Submenu::new(t(title), true);
             build(app, &sub, &entries, &mut items, &mut counter);
             let _ = menu.append(&sub);
         }
@@ -58,7 +61,15 @@ impl NativeMenu {
             .filter(|(_, p, _, c)| (p.is_null() || p.as_object().is_some_and(|o| o.is_empty())) && menus::shortcut_of(c).and_then(accel).is_some())
             .map(|(_, _, _, c)| c.clone())
             .collect();
-        Self { _menu: menu, items, last_refresh: 0.0, generation, slots: menus::listed_slots(app), plugins: menus::plugin_revision() }
+        Self {
+            _menu: menu,
+            items,
+            last_refresh: 0.0,
+            generation,
+            slots: menus::listed_slots(app),
+            plugins: menus::plugin_revision(),
+            language: i18n::current(),
+        }
     }
 
     /// Dispatch clicked items and refresh state.
@@ -74,11 +85,12 @@ impl NativeMenu {
             return;
         }
         self.last_refresh = now;
-        // Shortcuts edited, workspaces added, saved views, recent files or plug-ins changed: rebuild so
-        // accelerators and lists are current.
+        // Shortcuts edited, workspaces added, saved views, recent files, plug-ins or the UI language
+        // changed: rebuild so accelerators, lists and labels are current.
         if vectorcraft_ui_egui::shortcut_editor::GENERATION.load(std::sync::atomic::Ordering::Relaxed) != self.generation
             || menus::listed_slots(app) != self.slots
             || menus::plugin_revision() != self.plugins
+            || i18n::current() != self.language
         {
             *self = NativeMenu::install(app);
             return;
@@ -111,7 +123,7 @@ impl NativeMenu {
                             "view.cornerWidget" | "view.textThreads" | "view.gradientAnnotator" | "effect.last" | "type.hiddenCharacters"
                         )
                     {
-                        i.set_text(menus::dynamic_label(app, cmd, ""));
+                        i.set_text(menus::display_label(app, cmd, ""));
                     }
                 }
                 Handle::Check(c) => {
@@ -136,13 +148,13 @@ fn build(
                 let _ = parent.append(&PredefinedMenuItem::separator());
             }
             Item::Header(h) => {
-                let _ = parent.append(&MenuItem::new(*h, false, None));
+                let _ = parent.append(&MenuItem::new(t(h), false, None));
             }
             Item::Todo(label, sc) => {
-                let _ = parent.append(&MenuItem::new(*label, false, accel(sc)));
+                let _ = parent.append(&MenuItem::new(t(label), false, accel(sc)));
             }
             Item::Sub(label, children) => {
-                let sub = Submenu::new(*label, true);
+                let sub = Submenu::new(t(label), true);
                 build(app, &sub, children, items, counter);
                 let _ = parent.append(&sub);
             }
@@ -153,11 +165,11 @@ fn build(
                 let id = format!("dc{counter}");
                 let sc = if params.is_null() { menus::shortcut_of(cmd).and_then(accel) } else { None };
                 let handle = if menus::checked(app, cmd, params).is_some() {
-                    let c = CheckMenuItem::with_id(id.clone(), *label, true, false, sc);
+                    let c = CheckMenuItem::with_id(id.clone(), menus::display_label(app, cmd, label), true, false, sc);
                     let _ = parent.append(&c);
                     Handle::Check(c)
                 } else {
-                    let i = MenuItem::with_id(id.clone(), *label, true, sc);
+                    let i = MenuItem::with_id(id.clone(), menus::display_label(app, cmd, label), true, sc);
                     let _ = parent.append(&i);
                     Handle::Plain(i)
                 };

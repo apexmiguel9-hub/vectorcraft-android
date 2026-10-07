@@ -23,6 +23,8 @@ pub struct Workspace {
     pub task_bar: bool,
     pub dock: bool,
     pub dock_tab: DockTab,
+    /// The dock's tabbed group is collapsed to icons (built-in workspaces: expanded).
+    pub dock_collapsed: bool,
     pub open_panel: Option<String>,
     pub status_bar: bool,
 }
@@ -115,6 +117,7 @@ pub fn capture(ui: &UiState, name: &str) -> Workspace {
         task_bar: ui.task_bar,
         dock: ui.dock,
         dock_tab: ui.dock_tab,
+        dock_collapsed: ui.dock_collapsed,
         open_panel: ui.open_panel.clone(),
         status_bar: ui.status_bar,
     }
@@ -130,6 +133,7 @@ pub fn apply(ui: &mut UiState, w: &Workspace) {
     ui.task_bar = w.task_bar;
     ui.dock = w.dock;
     ui.dock_tab = w.dock_tab;
+    ui.dock_collapsed = w.dock_collapsed;
     ui.open_panel = w.open_panel.clone();
     ui.status_bar = w.status_bar;
     ui.flyout = None;
@@ -239,7 +243,8 @@ pub fn popup(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
                 ui.separator();
             }
             crate::menus::Item::Cmd(label, id, p) => {
-                let label = crate::menus::dynamic_label(app, id, label);
+                // As the Window menu draws it: custom workspace names (and Reset <name>) as they are.
+                let label = crate::menus::display_label(app, id, label);
                 let text = match crate::menus::checked(app, id, &p) {
                     Some(true) => format!("✓  {label}"),
                     Some(false) => format!("     {label}"),
@@ -327,7 +332,9 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(22)))
         .show(ctx, |ui| {
             ui.set_width(340.0);
-            ui.label(egui::RichText::new(if manage { "Manage Workspaces" } else { "New Workspace" }).font(theme::semibold(16.0)).color(t.text));
+            ui.label(
+                egui::RichText::new(if manage { tl!("Manage Workspaces") } else { tl!("New Workspace") }).font(theme::semibold(16.0)).color(t.text),
+            );
             ui.add_space(12.0);
             if manage {
                 egui::Frame::NONE.fill(t.input).stroke(egui::Stroke::new(1.0, t.input_border)).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
@@ -335,7 +342,8 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     ui.set_width(ui.available_width());
                     for n in names(&app.ui) {
                         let builtin = is_builtin(&n);
-                        let text = if builtin { egui::RichText::new(&n).color(t.text_dim) } else { egui::RichText::new(&n).color(t.text) };
+                        let shown = crate::panels::label_or_name(&n, builtin);
+                        let text = if builtin { egui::RichText::new(shown).color(t.text_dim) } else { egui::RichText::new(shown).color(t.text) };
                         if ui.selectable_label(d.str("selected") == n, text).clicked() && !builtin {
                             d.fields.insert("selected".into(), json!(n));
                             d.fields.insert("name".into(), json!(n));
@@ -349,36 +357,36 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     if ui.add(egui::TextEdit::singleline(&mut name).desired_width(180.0)).changed() {
                         d.fields.insert("name".into(), json!(name));
                     }
-                    if ui.button("New").on_hover_text("Save the current layout under this name").clicked() {
+                    if ui.button(tl!("New")).on_hover_text(tl!("Save the current layout under this name")).clicked() {
                         action = Some(("window.workspace.new", json!({"name": d.str("name")})));
                     }
                     ui.add_enabled_ui(!sel.is_empty(), |ui| {
-                        if ui.button("Rename").clicked() {
+                        if ui.button(tl!("Rename")).clicked() {
                             action = Some(("window.workspace.rename", json!({"name": sel, "to": d.str("name")})));
                         }
-                        if ui.button("Delete").clicked() {
+                        if ui.button(tl!("Delete")).clicked() {
                             action = Some(("window.workspace.delete", json!({"name": sel})));
                         }
                     });
                 });
             } else {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Name:").color(t.text_dim));
+                    ui.label(egui::RichText::new(tl!("Name:")).color(t.text_dim));
                     let mut name = d.str("name");
                     let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(240.0));
                     if r.changed() {
                         d.fields.insert("name".into(), json!(name));
                     }
                 });
-                ui.label(egui::RichText::new("Saves the current bars, toolbar and panel layout.").color(t.text_dim).size(11.0));
+                ui.label(egui::RichText::new(tl!("Saves the current bars, toolbar and panel layout.")).color(t.text_dim).size(11.0));
             }
             ui.add_space(16.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if widgets::primary_button(ui, "OK").clicked() {
+                if widgets::primary_button(ui, tl!("OK")).clicked() {
                     ok = true;
                 }
                 ui.add_space(8.0);
-                if !manage && widgets::secondary_button(ui, "Cancel").clicked() {
+                if !manage && widgets::secondary_button(ui, tl!("Cancel")).clicked() {
                     cancel = true;
                 }
             });

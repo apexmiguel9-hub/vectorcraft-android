@@ -5,6 +5,14 @@
 //! shortcuts, the ⌘K palette and the control channel ([`control`]).
 #![forbid(unsafe_code)]
 
+/// Translate a UI string literal into the language the UI is drawn in (see [`i18n`]).
+#[macro_export]
+macro_rules! tl {
+    ($s:expr) => {
+        $crate::i18n::t($s)
+    };
+}
+
 pub mod background;
 mod brand;
 pub mod canvas;
@@ -15,6 +23,7 @@ pub mod cursors;
 pub mod dialogs;
 pub mod dock;
 pub mod find_font;
+pub mod i18n;
 pub mod icon_data;
 pub mod icons;
 pub mod io;
@@ -46,6 +55,8 @@ mod tests_aisave;
 mod tests_background;
 #[cfg(test)]
 mod tests_clipboard;
+#[cfg(test)]
+mod tests_contextmenu;
 #[cfg(test)]
 mod tests_cut;
 #[cfg(test)]
@@ -79,6 +90,8 @@ mod tests_printps;
 #[cfg(test)]
 mod tests_printtiling;
 #[cfg(test)]
+mod tests_puppetwarp;
+#[cfg(test)]
 mod tests_recolor;
 #[cfg(test)]
 mod tests_recovery;
@@ -100,6 +113,8 @@ mod tests_sysclip;
 mod tests_sysclip_emf;
 #[cfg(test)]
 mod tests_transparencygrid;
+#[cfg(test)]
+mod tests_widthtool;
 
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -283,6 +298,9 @@ pub struct VectorcraftApp {
     /// Windows and Linux: the window has no OS decorations, so the app bar is the title bar (drag,
     /// double-click to maximize, caption buttons) and invisible edge zones resize the window.
     pub custom_titlebar: bool,
+    /// The graphics adapter the window renders with ("name (backend)"), as the host reports it:
+    /// shown in Help › About and `ui.inspect` for GPU bug reports. `None` when unknown.
+    pub graphics_adapter: Option<String>,
     /// File → Place: picked files, the place cursor's thumbnails, the Control bar's image details.
     pub place: place::PlaceState,
     /// The Paste commands can paste from the system clipboard alone: it holds something to paste
@@ -301,6 +319,11 @@ pub struct VectorcraftApp {
     host_modifiers: egui::Modifiers,
     /// Synthetic input set the modifiers egui holds (see [`Self::raw_input_hook`]).
     synthetic_modifiers: bool,
+    /// The marked text the system IME last sent (`None` once it commits or clears). When the Type
+    /// tool stops composing on its own (a click, a tool switch), the IME is told to drop it.
+    pub(crate) ime_marked: Option<String>,
+    /// The IME must drop its marked text (see [`Self::take_ime_discard`]).
+    pub(crate) ime_discard: bool,
 }
 
 /// Seconds between two looks at the system clipboard for [`VectorcraftApp::system_paste`].
@@ -352,6 +375,7 @@ impl VectorcraftApp {
             canvas_rect: None,
             hover_doc: None,
             custom_titlebar: false,
+            graphics_adapter: None,
             place: Default::default(),
             system_paste: false,
             system_paste_at: f64::NEG_INFINITY,
@@ -360,6 +384,8 @@ impl VectorcraftApp {
             recovery: Default::default(),
             host_modifiers: Default::default(),
             synthetic_modifiers: false,
+            ime_marked: None,
+            ime_discard: false,
         }
     }
 
@@ -394,7 +420,21 @@ impl VectorcraftApp {
             show_bbox: self.ui.view.bounding_box,
             snap_to_point: self.ui.view.snap_to_point,
             corner_widgets: self.ui.view.corner_widgets,
+            screen: self.screen_frame(),
         }
+    }
+
+    /// The canvas on screen in document coordinates (none before it is laid out).
+    pub fn screen_frame(&self) -> Option<vectorcraft_tools::ScreenFrame> {
+        let (rect, view) = (self.canvas_rect?, self.view()?);
+        let xf = canvas::Xf::new(rect, view);
+        let px = |x: f32, y: f32| xf.delta_to_doc(egui::vec2(x, y));
+        Some(vectorcraft_tools::ScreenFrame {
+            origin: xf.to_doc(rect.left_top()),
+            right: px(1.0, 0.0),
+            down: px(0.0, 1.0),
+            size: (f64::from(rect.width()), f64::from(rect.height())),
+        })
     }
 
     /// Run a UI or engine command by id. The single entry point for every frontend path.
@@ -482,6 +522,9 @@ impl VectorcraftApp {
         {
             *slot = id.to_string();
         }
+        if canvas::is_selection_tool(id) {
+            self.ui.last_selection_tool = id.to_string();
+        }
         toolbar::remember(self, id);
         self.ui.flyout = None;
     }
@@ -561,6 +604,13 @@ impl VectorcraftApp {
         });
     }
 
+    /// Did the Type tool end an IME composition on its own this frame? Interrupting the IME
+    /// through egui (`should_interrupt_composition`) doesn't reach the macOS input context, which
+    /// keeps the marked text and types it again into the next composition: the host discards it.
+    pub fn take_ime_discard(&mut self) -> bool {
+        std::mem::take(&mut self.ime_discard)
+    }
+
     /// Show a transient status message.
     pub fn status(&mut self, s: impl Into<String>) {
         self.ui.status = s.into();
@@ -610,6 +660,14 @@ impl VectorcraftApp {
 /// eframe isn't a dependency of this crate (the host owns the event loop); these entry points are
 /// called from the host's `eframe::App` impl.
 impl VectorcraftApp {
+    /// The language the UI is drawn in: the Preferences dialog's choice while it is open (so a
+    /// change shows before OK), else the `interfaceLanguage` preference (`auto` = the system's).
+    pub fn ui_language(&self) -> i18n::Lang {
+        let editing =
+            self.ui.dialog.as_ref().filter(|d| d.kind == "preferences").and_then(|d| d.fields.get("interfaceLanguage")).and_then(Value::as_str);
+        i18n::Lang::from_pref(editing.unwrap_or(&self.session.prefs.interface_language))
+    }
+
     /// Per-frame logic before layout (control channel, shortcuts, inbox). A bug that panics costs
     /// one frame and shows an error, instead of closing the app with unsaved work.
     pub fn logic(&mut self, ctx: &egui::Context) {
@@ -619,6 +677,7 @@ impl VectorcraftApp {
     }
 
     fn logic_frame(&mut self, ctx: &egui::Context) {
+        i18n::set_current(self.ui_language());
         if !self.styled {
             theme::install_fonts(ctx);
             theme::apply(ctx, self.ui.brightness);

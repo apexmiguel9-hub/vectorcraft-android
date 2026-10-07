@@ -7,6 +7,7 @@
 
 pub mod appearance;
 pub mod assets;
+pub mod blend;
 pub mod clipnest;
 pub mod graph;
 pub mod hit;
@@ -19,8 +20,10 @@ pub mod node;
 pub mod orient;
 pub mod overprint;
 pub mod pattern;
+pub mod perspective;
 mod pixels;
 pub mod profiles;
+pub mod puppet;
 pub mod range;
 pub mod rastersettings;
 mod reach;
@@ -65,7 +68,9 @@ pub use node::{ImageMap, ObjectAttributes};
 pub use node::{ImageObject, LAYER_COLORS, LayerColor, LiveShape, Node, NodeId, NodeKind, OpacityMask};
 pub use orient::OrientedBox;
 pub use pattern::{Overlap, PatternDef, PatternEdit, RepeatKind, RepeatSpec, TileType};
+pub use perspective::PerspectiveAttachment;
 pub use profiles::ColorProfiles;
+pub use puppet::{PuppetPin, PuppetPins};
 pub use rastersettings::{RasterColorModel, RasterEffectsSettings};
 pub use selection::{AnchorRef, Selection};
 pub use setup::{Background, DocSetup, ExportText, GridSize, Quotes};
@@ -563,6 +568,10 @@ pub struct Document {
     /// export settings are Export for Screens' ([`Document::export_settings`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<ExportAsset>,
+    /// Puppet Warp pins on the selected artwork while the tool edits it ([`PuppetPins`]): editing
+    /// state, never saved.
+    #[serde(skip)]
+    pub puppet: Option<Arc<PuppetPins>>,
 }
 
 fn ppi72() -> f64 {
@@ -630,6 +639,7 @@ impl Document {
             slices_clip_to_artboard: true,
             print_setup: None,
             assets: vec![],
+            puppet: None,
         };
         let id = d.alloc_id();
         d.layers.push(Arc::new(Node::layer(id, "Layer 1", LayerColor::Preset(0))));

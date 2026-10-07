@@ -73,6 +73,7 @@ fn tool_key(name: &str) -> Option<ToolKey> {
         "[" | "bracketleft" | "openbracket" => ToolKey::BracketLeft,
         "]" | "bracketright" | "closebracket" => ToolKey::BracketRight,
         "tab" => ToolKey::Tab,
+        k if k.len() == 1 => ToolKey::Digit(k.parse().ok()?),
         _ => return None,
     })
 }
@@ -147,6 +148,7 @@ impl Headless {
                     self.session.select_tool(&t, self.view).map_err(|e| e.to_string())?;
                 }
                 UiRequest::Dialog(k, p) => out.push(json!({"dialog": k, "params": p})),
+                UiRequest::Status(msg) => out.push(json!({"status": msg})),
             }
         }
         Ok(())
@@ -166,9 +168,14 @@ impl Headless {
             let x = e.get("x").and_then(Value::as_f64).ok_or("pointer event needs numeric `x`")?;
             let y = e.get("y").and_then(Value::as_f64).ok_or("pointer event needs numeric `y`")?;
             let mods = e.get("mods").and_then(|m| serde_json::from_value(m.clone()).ok()).unwrap_or(base);
-            let ev = PointerEvent { kind, pos: Point::new(x, y), mods, pressure: 1.0 };
+            let ev = PointerEvent { kind, pos: Point::new(x, y), mods, pressure: PointerEvent::json_pressure(e) };
             let reqs = self.session.pointer(&ev, self.view).map_err(|e| e.to_string())?;
             self.apply_ui_requests(reqs, &mut requests)?;
+            let hold = PointerEvent::json_hold(e);
+            if hold > 0.0 {
+                let reqs = self.session.tool_tick(hold, self.view).map_err(|e| e.to_string())?;
+                self.apply_ui_requests(reqs, &mut requests)?;
+            }
         }
         let sel = self.session.active().map(|d| d.selection.objects.iter().map(|i| i.0).collect::<Vec<_>>()).unwrap_or_default();
         Ok(json!({"selection": sel, "tool": self.session.tool_id(), "requests": requests}))

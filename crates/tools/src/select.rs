@@ -2,7 +2,8 @@
 //! bounding-box scale (Shift proportional, Alt from centre) and rotate (outside corners, Shift 45°),
 //! drag a live rectangle's corner widget to round its corners, double-click to enter isolation mode.
 //! The bounding box stands at the selection's own angle after a rotation, so its handles scale
-//! along the objects' axes.
+//! along the objects' axes. A handle drag resizes area type's frame (the type area) instead of
+//! scaling its type: the text reflows at its size.
 
 use serde_json::{Value, json};
 use vectorcraft_doc::hit::{hit_test, marquee};
@@ -21,10 +22,15 @@ enum State {
     Moving {
         start: Point,
         began: bool,
+        /// Shift-pressed on this selected object: released without a drag, it leaves the
+        /// selection.
+        deselect: Option<NodeId>,
     },
     Scaling {
         handle: Handle,
         bx: OrientedBox,
+        /// Area type is selected: its frame resizes (`typeAreas`), its type keeps its size.
+        areas: bool,
     },
     Rotating {
         center: Point,
@@ -126,8 +132,12 @@ impl Tool for SelectionTool {
                 {
                     match box_hit(cx, &bx, p) {
                         Some(BoxHit::Handle(handle)) => {
-                            self.state = State::Scaling { handle, bx };
-                            return vec![Action::Begin("Scale".into())];
+                            let is_area = |id: &NodeId| cx.doc.node(*id).is_some_and(is_area_type);
+                            let areas = cx.selection.objects.iter().any(is_area);
+                            // Only area type: the step resizes type areas; anything else scales.
+                            let label = if areas && cx.selection.objects.iter().all(is_area) { "Resize Type Area" } else { "Scale" };
+                            self.state = State::Scaling { handle, bx, areas };
+                            return vec![Action::Begin(label.into())];
                         }
                         Some(BoxHit::Rotate) => {
                             self.state = State::Rotating { center: bx.center(), start: p };
@@ -141,16 +151,19 @@ impl Tool for SelectionTool {
                     Some(h) => {
                         let top = h.top_object(cx.isolation);
                         let mut out = vec![];
+                        let mut deselect = None;
                         if m.shift {
-                            out.push(Action::Exec("select.toggle".into(), json!({ "id": top.0 })));
+                            // A Shift-click takes a selected object out of the selection when it
+                            // is released; a Shift-drag moves the selection, constrained.
                             if cx.selection.contains(top) {
-                                self.state = State::Idle;
-                                return out;
+                                deselect = Some(top);
+                            } else {
+                                out.push(Action::Exec("select.toggle".into(), json!({ "id": top.0 })));
                             }
                         } else if !cx.selection.contains(top) {
                             out.push(Action::Exec("select.set".into(), json!({ "ids": [top.0] })));
                         }
-                        self.state = State::Moving { start: p, began: false };
+                        self.state = State::Moving { start: p, began: false, deselect };
                         out
                     }
                     None => {
@@ -185,17 +198,21 @@ impl Tool for SelectionTool {
                     d = vectorcraft_geom::Vec2::new((b.x0 + d.x).round() - b.x0, (b.y0 + d.y).round() - b.y0);
                     self.guides.clear();
                 }
-                self.state = State::Moving { start, began: true };
+                self.state = State::Moving { start, began: true, deselect: None };
                 self.measure = Some((p, cx.offset_label(d.x, d.y)));
                 out.push(Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(Affine::translate(d)), "copy": m.alt })));
                 out
             }
-            (PointerKind::Drag, State::Scaling { handle, bx }) => {
+            (PointerKind::Drag, State::Scaling { handle, bx, areas }) => {
                 // Scale in the box's own frame: along the objects' axes when it is rotated.
                 let a = scale_for_drag(bx.rect, handle, bx.to_local(p), m.shift, m.alt);
                 let nr = a.transform_rect_bbox(bx.rect);
                 self.measure = Some((p, cx.size_label(nr.width(), nr.height())));
-                vec![Action::Preview("object.transform".into(), json!({ "matrix": matrix_json(bx.conjugate(a)), "copy": false }))]
+                let mut params = json!({ "matrix": matrix_json(bx.conjugate(a)), "copy": false });
+                if areas {
+                    params["typeAreas"] = json!(true);
+                }
+                vec![Action::Preview("object.transform".into(), params)]
             }
             (PointerKind::Drag, State::Rotating { center, start, .. }) => {
                 let (a, deg) = rotate_for_drag(center, start, p, m.shift);
@@ -215,12 +232,16 @@ impl Tool for SelectionTool {
                 self.state = State::Idle;
                 c.finish()
             }
-            (PointerKind::Up, State::Moving { began, .. }) => {
+            (PointerKind::Up, State::Moving { began, deselect, .. }) => {
                 self.state = State::Idle;
                 self.measure = None;
                 self.guides.clear();
                 self.targets = None;
-                if began { vec![Action::Commit] } else { vec![] }
+                match (began, deselect) {
+                    (true, _) => vec![Action::Commit],
+                    (false, Some(id)) => vec![Action::Exec("select.toggle".into(), json!({ "id": id.0 }))],
+                    (false, None) => vec![],
+                }
             }
             (PointerKind::Up, State::Scaling { .. } | State::Rotating { .. }) => {
                 self.state = State::Idle;
@@ -261,7 +282,7 @@ impl Tool for SelectionTool {
     fn cursor(&self, cx: &ToolContext, p: Point, m: Mods) -> Cursor {
         match self.state {
             State::Rotating { .. } => return Cursor::Rotate,
-            State::Scaling { handle, bx } => return handle_cursor(handle, bx.angle),
+            State::Scaling { handle, bx, .. } => return handle_cursor(handle, bx.angle),
             State::Moving { began: true, .. } => return Cursor::Arrow,
             State::Corner(_) => return Cursor::CornerRadius,
             _ => {}
@@ -286,6 +307,12 @@ impl Tool for SelectionTool {
         }
         Cursor::Arrow
     }
+}
+
+/// Is `n` area type (text in a frame) whose frame the tools reshape? Type in perspective isn't:
+/// it transforms whole.
+pub(crate) fn is_area_type(n: &vectorcraft_doc::Node) -> bool {
+    n.perspective.is_none() && matches!(&n.kind, vectorcraft_doc::NodeKind::Text(t) if matches!(t.kind, vectorcraft_doc::TextKind::Area { .. }))
 }
 
 /// The resize cursor for handle `h` of a box turned by `angle` (counter-clockwise degrees): the
@@ -340,6 +367,48 @@ mod tests {
     }
 
     #[test]
+    fn shift_drag_on_a_selected_object_moves_it_constrained() {
+        let (d, id) = doc_with_rect();
+        let mut s = Selection::default();
+        s.add(id);
+        let p = paint();
+        let cx = cx(&d, &s, &p);
+        let mut t = SelectionTool::default();
+        let shift = |kind, x, y| ev(kind, x, y).with_mods(Mods { shift: true, ..Mods::default() });
+        // Pressing keeps the selection: nothing is toggled yet.
+        assert!(t.pointer(&cx, &shift(PointerKind::Down, 150.0, 150.0)).is_empty());
+        let a = t.pointer(&cx, &shift(PointerKind::Drag, 190.0, 160.0));
+        assert_eq!(a[0], Action::Begin("Move".into()));
+        assert!(
+            matches!(&a[1], Action::Preview(c, v) if c == "object.transform"
+                && v["matrix"][4].as_f64().is_some_and(|x| x > 39.0) && v["matrix"][5] == 0.0),
+            "moved right, constrained to horizontal: {a:?}"
+        );
+        assert_eq!(t.pointer(&cx, &shift(PointerKind::Up, 190.0, 160.0)), vec![Action::Commit]);
+    }
+
+    #[test]
+    fn shift_click_toggles_an_object_on_release() {
+        let (d, id) = doc_with_rect();
+        let p = paint();
+        let shift = |kind, x, y| ev(kind, x, y).with_mods(Mods { shift: true, ..Mods::default() });
+        let toggle = vec![Action::Exec("select.toggle".into(), json!({"id": id.0}))];
+        // Selected: it leaves the selection when the click is released.
+        let mut s = Selection::default();
+        s.add(id);
+        let cx1 = cx(&d, &s, &p);
+        let mut t = SelectionTool::default();
+        assert!(t.pointer(&cx1, &shift(PointerKind::Down, 150.0, 150.0)).is_empty());
+        assert_eq!(t.pointer(&cx1, &shift(PointerKind::Up, 150.0, 150.0)), toggle);
+        // Not selected: it joins the selection at once, ready to be dragged.
+        let s = Selection::default();
+        let cx2 = cx(&d, &s, &p);
+        let mut t = SelectionTool::default();
+        assert_eq!(t.pointer(&cx2, &shift(PointerKind::Down, 150.0, 150.0)), toggle);
+        assert!(t.pointer(&cx2, &shift(PointerKind::Up, 150.0, 150.0)).is_empty());
+    }
+
+    #[test]
     fn marquee_selects() {
         let (d, id) = doc_with_rect();
         let s = Selection::default();
@@ -366,6 +435,36 @@ mod tests {
         let a = t.pointer(&cx, &ev(PointerKind::Drag, 300.0, 300.0));
         assert!(matches!(&a[0], Action::Preview(_, v) if v["matrix"][0] == 2.0));
         assert_eq!(t.pointer(&cx, &ev(PointerKind::Up, 300.0, 300.0)), vec![Action::Commit]);
+    }
+
+    #[test]
+    fn handle_drag_on_area_type_resizes_its_frame() {
+        let (d, text) = doc_with_area_type();
+        let p = paint();
+        let mut s = Selection::default();
+        s.add(text);
+        let cx1 = cx(&d, &s, &p);
+        let mut t = SelectionTool::default();
+        // Bottom-right handle of the 120 × 40 frame at (300, 300).
+        assert_eq!(t.pointer(&cx1, &ev(PointerKind::Down, 420.0, 340.0)), vec![Action::Begin("Resize Type Area".into())]);
+        let a = t.pointer(&cx1, &ev(PointerKind::Drag, 460.0, 400.0));
+        assert!(matches!(&a[0], Action::Preview(c, v) if c == "object.transform" && v["typeAreas"] == true), "{a:?}");
+        assert_eq!(t.pointer(&cx1, &ev(PointerKind::Up, 460.0, 400.0)), vec![Action::Commit]);
+        // With another object the step is a scale, still resizing the type area.
+        let rect = d.layers[0].children().unwrap()[0].id;
+        s.add(rect);
+        let cx2 = cx(&d, &s, &p);
+        assert_eq!(t.pointer(&cx2, &ev(PointerKind::Down, 420.0, 340.0)), vec![Action::Begin("Scale".into())]);
+        let a = t.pointer(&cx2, &ev(PointerKind::Drag, 460.0, 400.0));
+        assert!(matches!(&a[0], Action::Preview(_, v) if v["typeAreas"] == true), "{a:?}");
+        t.pointer(&cx2, &ev(PointerKind::Up, 460.0, 400.0));
+        // Without area type the drag scales as before.
+        let mut s = Selection::default();
+        s.add(rect);
+        let cx3 = cx(&d, &s, &p);
+        t.pointer(&cx3, &ev(PointerKind::Down, 200.0, 200.0));
+        let a = t.pointer(&cx3, &ev(PointerKind::Drag, 300.0, 300.0));
+        assert!(matches!(&a[0], Action::Preview(_, v) if v.get("typeAreas").is_none()), "{a:?}");
     }
 
     #[test]

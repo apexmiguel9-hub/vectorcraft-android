@@ -101,7 +101,7 @@ pub fn show_icon_panel(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
         asset_export::ID => asset_export::show(app, ui),
         css_properties::ID => css_properties::show(app, ui),
         _ => {
-            dim_label(ui, "This panel is on the roadmap (see the parity plan).");
+            dim_label(ui, tl!("This panel is on the roadmap (see the parity plan)."));
         }
     }
 }
@@ -146,7 +146,7 @@ pub fn panel_menu_items(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
         asset_export::ID => asset_export::menu(app, ui),
         css_properties::ID => css_properties::menu(app, ui),
         _ => {
-            ui.add_enabled(false, egui::Button::new("No options").frame(false));
+            ui.add_enabled(false, egui::Button::new(tl!("No options")).frame(false));
         }
     }
 }
@@ -156,7 +156,7 @@ pub fn panel_menu(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, rect: Rect) {
     let t = Tokens::get(ui.ctx());
     let resp = ui.interact(rect, ui.id().with(("panel-menu", id)), Sense::click());
     icons::paint(ui, "menu", rect.shrink(1.0), if resp.hovered() { t.text_strong } else { t.text_dim });
-    let resp = resp.on_hover_text("Panel menu");
+    let resp = resp.on_hover_text(tl!("Panel menu"));
     egui::Popup::menu(&resp).show(|ui| {
         crate::widgets::menu_scroll(ui, |ui| {
             ui.set_min_width(220.0);
@@ -171,7 +171,7 @@ pub fn libraries(_app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.vertical_centered(|ui| {
         icons::icon(ui, "library", 40.0, t.text_dim);
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("Local Libraries").size(14.0).color(t.text));
+        ui.label(egui::RichText::new(tl!("Local Libraries")).size(14.0).color(t.text));
         dim_label(
             ui,
             "Drag art, colors and text styles here to reuse them across documents. Libraries are stored on this machine — no account required.",
@@ -372,6 +372,11 @@ pub(crate) fn set_pstate<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, 
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(("panel-state", key)), v));
 }
 
+/// [`crate::i18n::label_or_name`] in the UI language.
+pub(crate) fn label_or_name(s: &str, built_in: bool) -> &str {
+    crate::i18n::label_or_name(crate::i18n::current(), s, built_in)
+}
+
 /// "Recent Colors" header + a row of chips (the Session's recent colours, which every paint
 /// command feeds); clicking one applies it to the active proxy (Alt: the inactive one).
 pub(crate) fn recent_colors_row(app: &mut VectorcraftApp, ui: &mut Ui) {
@@ -425,8 +430,8 @@ pub(crate) fn empty_state(ui: &mut Ui, icon: &str, title: &str, body: &str) {
     ui.vertical_centered(|ui| {
         icons::icon(ui, icon, 28.0, t.text_disabled);
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(title).size(12.5).color(t.text));
-        ui.label(egui::RichText::new(body).size(11.5).color(t.text_dim));
+        ui.label(egui::RichText::new(tl!(title)).size(12.5).color(t.text));
+        ui.label(egui::RichText::new(tl!(body)).size(11.5).color(t.text_dim));
     });
     ui.add_space(12.0);
 }

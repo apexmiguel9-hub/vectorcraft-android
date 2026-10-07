@@ -9,6 +9,7 @@
 mod about;
 mod all_tools;
 mod artboard_options;
+pub mod blend_options;
 pub mod color_balance;
 pub mod color_guide_options;
 mod color_picker;
@@ -32,6 +33,7 @@ mod gradient_stop;
 pub mod graphic_style_options;
 pub mod halftone;
 pub mod import_pdf;
+pub mod liquify;
 pub mod missing_links;
 pub mod new_color_group;
 mod new_document;
@@ -41,6 +43,9 @@ pub mod package;
 mod path_ops;
 pub mod pdf_presets;
 pub mod perspective_grid;
+pub mod perspective_options;
+pub mod perspective_plane;
+pub mod perspective_presets;
 pub mod place;
 pub mod placement_options;
 pub mod plugin;
@@ -107,7 +112,8 @@ const ANCHOR_Y: f32 = -40.0;
 pub(crate) struct DialogSpec {
     /// Draws its own window instead of the shared frame (the frame fields below are then unused).
     pub window: Option<fn(&mut VectorcraftApp, &egui::Context)>,
-    /// The heading (and window title).
+    /// The heading (and window title), in the UI language: the spec translates its own text and
+    /// leaves names in it (a document's, a plug-in's) as they are.
     pub heading: fn(&Dialog) -> String,
     /// Draws the fields. Returns true to close the dialog as Cancel would.
     pub body: fn(&mut VectorcraftApp, &mut egui::Ui, &mut Dialog) -> bool,
@@ -130,7 +136,7 @@ impl DialogSpec {
     /// A text field per value; OK just closes. Also the fallback for unregistered kinds.
     pub const FORM: Self = Self {
         window: None,
-        heading: |_| "Dialog".into(),
+        heading: |_| tl!("Dialog").into(),
         body: |app, ui, d| {
             form::grid(ui, d, app.session.general_unit());
             false
@@ -171,6 +177,9 @@ macro_rules! registry {
                     _ => None,
                 }
             }
+
+            /// Every variant, in registry order.
+            pub const ALL: &[DialogKind] = &[$(Self::$variant,)+];
 
             fn spec(self) -> &'static DialogSpec {
                 match self {
@@ -257,6 +266,24 @@ registry! {
     VectorHalftone: [halftone::KIND] => halftone::SPEC,
     PerspectiveGrid: [perspective_grid::KIND] => perspective_grid::SPEC,
     Envelope: [envelope::WARP, envelope::MESH, envelope::OPTIONS] => envelope::SPEC,
+    LiquifyOptions: [liquify::KIND] => liquify::SPEC,
+    PerspectiveGridPresets: [perspective_presets::KIND] => perspective_presets::SPEC,
+    PerspectiveGridOptions: [perspective_options::KIND] => perspective_options::SPEC,
+    BlendOptions: [blend_options::KIND] => blend_options::SPEC,
+    PerspectivePlane: [perspective_plane::KIND] => perspective_plane::SPEC,
+}
+
+/// The button labels the shared dialog frame can show (OK, discard and the fixed Cancel/Close),
+/// so the catalog tests can insist they are translated.
+pub fn button_labels() -> Vec<&'static str> {
+    let mut v = vec!["Cancel", "Close"];
+    for spec in std::iter::once(&DialogSpec::FORM).chain(DialogKind::ALL.iter().map(|k| k.spec())) {
+        v.extend(spec.ok);
+        v.extend(spec.discard);
+    }
+    v.sort_unstable();
+    v.dedup();
+    v
 }
 
 /// The spec for a `Dialog::kind` ([`DialogSpec::FORM`] when unregistered).
@@ -341,9 +368,10 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.add_space(12.0);
             cancel = (spec.body)(app, ui, &mut d);
             ui.add_space(16.0);
-            // The button row is as tall as the buttons: a right-to-left layout would otherwise take
-            // all the height left in the window, so the window could never shrink to its content.
-            let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+            // The button row is as wide as the fields above it and as tall as the buttons: a
+            // right-to-left layout would otherwise take all the room left in the window, so the
+            // window could never shrink to its content.
+            let row = egui::vec2(ui.min_rect().width(), ui.spacing().interact_size.y);
             ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(label) = spec.ok.map(|ok| spec.ok_label.map_or(ok, |f| f(app)))
                     && widgets::primary_button(ui, label).clicked()
@@ -373,6 +401,28 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     } else if ok && let Err(e) = confirm(app) {
         app.status(e);
     }
+}
+
+/// What a dropdown shows for `names`, a list mixing built-in labels (`builtin(index)`: translated
+/// into `lang`) with names the user saved or a file or the system supplied (shown as they are).
+pub(crate) fn shown_names<'a>(lang: crate::i18n::Lang, names: &[&'a str], builtin: impl Fn(usize) -> bool) -> Vec<&'a str> {
+    names.iter().enumerate().map(|(k, n)| crate::i18n::label_or_name(lang, n, builtin(k))).collect()
+}
+
+/// [`widgets::dropdown_names`] over such a mixed list ([`shown_names`] in the UI language), showing
+/// `current` as its entry reads; a `current` that isn't among `names` is shown as given (a caller
+/// translates its own [Custom]). Returns the index chosen in `names`.
+pub(crate) fn mixed_dropdown(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    current: &str,
+    names: &[&str],
+    width: f32,
+    builtin: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    let shown = shown_names(crate::i18n::current(), names, builtin);
+    let current = names.iter().position(|n| *n == current).and_then(|i| shown.get(i).copied()).unwrap_or(current);
+    widgets::dropdown_names(ui, id, current, &shown, width)
 }
 
 #[cfg(test)]

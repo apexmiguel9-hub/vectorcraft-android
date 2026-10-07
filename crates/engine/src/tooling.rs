@@ -2,6 +2,7 @@
 
 use serde_json::{Map, Value};
 use vectorcraft_geom::Point;
+use vectorcraft_tools::distort::perspective::widget::WidgetPlace;
 use vectorcraft_tools::{Action, Cursor, Mods, Overlay, PointerEvent, PointerKind, Tool, ToolContext, ToolKey, settings};
 
 use crate::{EngineError, Prefs, Result, Session};
@@ -20,6 +21,8 @@ pub struct ViewInfo {
     pub snap_to_point: bool,
     /// View → Show Corner Widget.
     pub corner_widgets: bool,
+    /// The document window (none headless): screen-fixed widgets sit in it.
+    pub screen: Option<vectorcraft_tools::ScreenFrame>,
 }
 
 impl Default for ViewInfo {
@@ -33,6 +36,7 @@ impl Default for ViewInfo {
             snap_to_pixel: false,
             snap_to_point: true,
             corner_widgets: true,
+            screen: None,
         }
     }
 }
@@ -42,6 +46,9 @@ impl Default for ViewInfo {
 pub enum UiRequest {
     Dialog(String, Value),
     SwitchTool(String),
+    /// A message for the status bar: the `warning` of a command the tool ran (Liquify skipping
+    /// type under the brush).
+    Status(String),
 }
 
 impl Session {
@@ -131,6 +138,8 @@ impl Session {
             paste_plain_text: self.prefs.paste_text_formatting == "plain",
             slices_hidden: self.menu.slices_hidden,
             slices_locked: self.menu.slices_locked,
+            screen: view.screen,
+            plane_widget: self.prefs.perspective_widget.show.then_some(self.prefs.perspective_widget.position),
         };
         let tool = &mut self.tool;
         match crate::guard::catch_panic(|| f(tool.as_mut(), &cx)) {
@@ -154,6 +163,10 @@ impl Session {
     /// Feed a pointer event to the active tool. Returns requests for the UI.
     pub fn pointer(&mut self, ev: &PointerEvent, view: ViewInfo) -> Result<Vec<UiRequest>> {
         self.last_view = view;
+        // The Plane Switching Widget takes its clicks whatever the tool.
+        if let Some(r) = self.plane_widget_pointer(ev, view) {
+            return r;
+        }
         let acts = self.with_tool_cx(view, |t, cx| t.pointer(cx, ev));
         self.take_tool_panic()?;
         // A gesture may change options (Alt-drag sizes a Liquify brush): keep them.
@@ -163,7 +176,28 @@ impl Session {
         self.apply_actions(acts)
     }
 
+    /// Time passed while the pointer button is held (`dt` seconds; see [`Tool::tick`]): the
+    /// desktop app ticks every frame of a press, agents with `holdMs` on a pointer event.
+    pub fn tool_tick(&mut self, dt: f64, view: ViewInfo) -> Result<Vec<UiRequest>> {
+        if !self.tool.wants_ticks() {
+            return Ok(vec![]);
+        }
+        let acts = self.with_tool_cx(view, |t, cx| t.tick(cx, dt));
+        self.take_tool_panic()?;
+        self.apply_actions(acts)
+    }
+
+    /// Does the active tool want [`Session::tool_tick`]s now?
+    pub fn tool_wants_ticks(&self) -> bool {
+        self.tool.wants_ticks()
+    }
+
     pub fn tool_key(&mut self, key: ToolKey, mods: Mods, view: ViewInfo) -> Result<Vec<UiRequest>> {
+        // 1–4 pick the active perspective plane while the grid is shown.
+        if let Some(plane) = self.plane_key(key) {
+            self.execute("perspective.plane.set", &serde_json::json!({ "plane": plane.id() }))?;
+            return Ok(vec![]);
+        }
         let acts = self.with_tool_cx(view, |t, cx| t.key(cx, key, mods));
         self.take_tool_panic()?;
         self.apply_actions(acts)
@@ -180,19 +214,39 @@ impl Session {
         self.tool.wants_text()
     }
 
+    /// IME marked text for the active tool (see `Tool::ime_preedit`; `active_chars` counts
+    /// characters).
+    pub fn tool_preedit(&mut self, text: &str, active_chars: Option<std::ops::Range<usize>>, view: ViewInfo) -> Result<Vec<UiRequest>> {
+        let acts = self.with_tool_cx(view, |t, cx| t.ime_preedit(cx, text, active_chars));
+        self.take_tool_panic()?;
+        self.apply_actions(acts)
+    }
+
+    /// Is the active tool showing uncommitted IME text?
+    pub fn tool_composing(&self) -> bool {
+        self.tool.composing()
+    }
+
+    /// The caret line (document space) the IME candidate window follows.
+    pub fn tool_ime_caret(&mut self, view: ViewInfo) -> Option<(Point, Point)> {
+        self.with_tool_cx(view, |t, cx| t.ime_caret(cx))
+    }
+
     pub fn tool_busy(&self) -> bool {
         self.tool.busy()
     }
 
     /// Does the active tool take `key` ahead of the shortcuts bound to it (see `Tool::claims_key`)?
     pub fn tool_claims_key(&mut self, key: ToolKey, view: ViewInfo) -> bool {
-        self.with_tool_cx(view, |t, cx| t.claims_key(cx, key))
+        self.plane_key(key).is_some() || self.with_tool_cx(view, |t, cx| t.claims_key(cx, key))
     }
 
     pub fn overlays(&mut self, view: ViewInfo) -> Vec<Overlay> {
         let mut v = self.with_tool_cx(view, |t, cx| t.overlays(cx));
         if let Some(d) = self.active() {
-            v.splice(0..0, vectorcraft_tools::distort::perspective::grid_overlays(&d.doc, 1.0 / view.zoom.max(1e-9), self.tool.id()));
+            let w = self.prefs.perspective_widget;
+            let place = w.show.then_some(WidgetPlace { screen: view.screen.as_ref(), corner: w.position });
+            v.splice(0..0, vectorcraft_tools::distort::perspective::grid_overlays_in(&d.doc, 1.0 / view.zoom.max(1e-9), self.tool.id(), place));
         }
         v
     }
@@ -275,13 +329,25 @@ impl Session {
         for a in acts {
             match a {
                 Action::Begin(label) => self.begin_interaction(&label)?,
-                Action::Preview(cmd, p) => {
-                    if let Err(e) = self.preview(&cmd, &p) {
-                        log::warn!("preview {cmd}: {e}");
+                Action::Preview(cmd, p) => match self.preview(&cmd, &p) {
+                    Ok(v) => {
+                        if let Some(w) = v.get("warning").and_then(Value::as_str)
+                            && !ui.iter().any(|r| matches!(r, UiRequest::Status(s) if s == w))
+                        {
+                            ui.push(UiRequest::Status(w.to_string()));
+                        }
                     }
+                    Err(e) => log::warn!("preview {cmd}: {e}"),
+                },
+                // The drag is over: the dabs of a Liquify stroke have no further use.
+                Action::Commit => {
+                    self.liquify_stroke = None;
+                    self.commit_interaction()?
                 }
-                Action::Commit => self.commit_interaction()?,
-                Action::Cancel => self.cancel_interaction()?,
+                Action::Cancel => {
+                    self.liquify_stroke = None;
+                    self.cancel_interaction()?
+                }
                 Action::Exec(cmd, p) => {
                     self.execute(&cmd, &p)?;
                 }

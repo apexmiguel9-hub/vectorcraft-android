@@ -50,8 +50,8 @@ pub const BASIC: &[(&str, &[&[&str]])] = &[
 
 fn tip(t: &ToolInfo) -> String {
     match crate::shortcut_editor::tool_shortcut(t.id) {
-        Some(s) => format!("{} ({})", t.label, s),
-        None => t.label.to_string(),
+        Some(s) => format!("{} ({})", tl!(t.label), s),
+        None => tl!(t.label).to_string(),
     }
 }
 
@@ -96,7 +96,7 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                 egui::Rect::from_min_size(hdr.left_top() + vec2(3.0, 2.0), vec2(10.0, 10.0)),
                 if hresp.hovered() { t.text_strong } else { t.text },
             );
-            if hresp.on_hover_text("Toggle single/double column").clicked() {
+            if hresp.on_hover_text(tl!("Toggle single/double column")).clicked() {
                 app.ui.toolbar_double = !app.ui.toolbar_double;
             }
             let (grip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
@@ -120,7 +120,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
                 while i < all.len() {
                     if let Some(cat) = all[i].0 {
                         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
-                        let label = if cols == 1 && cat.len() > 6 { format!("{}...", &cat[..4]) } else { cat.to_string() };
+                        // A long name is cut to its first four characters in the single column.
+                        let cat = tl!(cat);
+                        let label = if cols == 1 && cat.chars().count() > 6 {
+                            format!("{}...", cat.chars().take(4).collect::<String>())
+                        } else {
+                            cat.to_string()
+                        };
                         ui.painter().text(r.center() + vec2(0.0, 2.0), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(11.0), t.text);
                     }
                     // One row = `cols` slots (a category label always starts a new row).
@@ -200,25 +206,48 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
 }
 
 /// Open a tool's options (`tool.options`, a double-click on its button): the Gradient tool's are
-/// the Gradient panel, the Eyedropper's the Eyedropper Options dialog; the Print Tiling tool's
-/// resets the print tiling.
+/// the Gradient panel, the Eyedropper's the Eyedropper Options dialog, a Liquify tool's its Tool
+/// Options dialog, the Blend tool's Blend
+/// Options; the Print Tiling tool's resets the print tiling. As in the reference app, the Hand
+/// tool's fits the artboard in the window, the Zoom tool's shows it at 100%, and the Rotate, Scale,
+/// Reflect and Shear tools' are their Object › Transform dialogs.
 pub fn open_options(app: &mut VectorcraftApp, tool: &str) -> Result<serde_json::Value, String> {
     match tool {
+        "hand" => app.run("view.fitArtboard", json!({})),
+        "zoom" => app.run("view.actualSize", json!({})),
+        "rotate" | "scale" | "reflect" | "shear" => {
+            let id = format!("object.{tool}");
+            if let Some(c) = vectorcraft_engine::find_command(&id) {
+                (c.enabled)(&app.session)?;
+            }
+            crate::menus::invoke(app, &id, json!({}));
+            Ok(json!({ "dialog": tool }))
+        }
         "gradient" if app.ui.open_panel.as_deref() == Some("gradient") => Ok(json!({ "open": "gradient" })),
         "gradient" => app.run("window.panel", json!({ "panel": "gradient" })),
         "eyedropper" => {
             crate::dialogs::eyedropper::open(app);
             Ok(json!({ "dialog": crate::dialogs::eyedropper::KIND }))
         }
+        "blend" => {
+            crate::dialogs::blend_options::open(app)?;
+            Ok(json!({ "dialog": crate::dialogs::blend_options::KIND }))
+        }
+        "perspectiveGrid" => {
+            crate::dialogs::perspective_options::open(app);
+            Ok(json!({ "dialog": crate::dialogs::perspective_options::KIND }))
+        }
         // A double click on the Print Tiling tool puts the pages back where the placement puts them.
         "printTiling" => app.run("print.tiling.set", json!({ "reset": true })),
+        // The Liquify tools: their Tool Options (the Global Brush Dimensions and the tool's own).
+        _ if vectorcraft_tools::settings::LIQUIFY.contains(&tool) => crate::dialogs::liquify::open(app, tool),
         _ if vectorcraft_tools::tool_info(tool).is_none() => Err(format!("unknown tool `{tool}`")),
         _ => Err(format!("the {tool} tool has no options")),
     }
 }
 
-/// The active tool's options in the Control bar: Mirror & Cut's axis and the side it keeps (set
-/// through `tool.setOption`).
+/// The active tool's options in the Control bar: Mirror & Cut's axis and the side it keeps, Puppet
+/// Warp's mesh and pins (set through `tool.setOption`).
 pub fn control_bar_options(app: &mut VectorcraftApp, ui: &mut Ui) {
     /// (value, label) of each choice.
     type Choices = &'static [(&'static str, &'static str)];
@@ -226,13 +255,16 @@ pub fn control_bar_options(app: &mut VectorcraftApp, ui: &mut Ui) {
         ("axis", "Axis:", &[("free", "Free"), ("vertical", "Vertical"), ("horizontal", "Horizontal")]),
         ("keep", "Keep:", &[("left", "Left"), ("right", "Right"), ("top", "Top"), ("bottom", "Bottom")]),
     ];
+    if app.session.tool_id() == "puppetWarp" {
+        return puppet_warp_options(app, ui);
+    }
     if app.session.tool_id() != "mirrorCut" {
         return;
     }
     let t = Tokens::get(ui.ctx());
     let opts = app.session.tool_options();
     for (key, label, choices) in MIRROR {
-        ui.label(egui::RichText::new(label).size(12.0).color(t.text));
+        ui.label(egui::RichText::new(tl!(label)).size(12.0).color(t.text));
         let cur = opts[key].as_str().unwrap_or_default();
         let shown = choices.iter().find(|(v, _)| *v == cur).map_or(cur, |(_, l)| *l);
         let labels: Vec<&str> = choices.iter().map(|(_, l)| *l).collect();
@@ -258,7 +290,7 @@ fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens) {
                 "paint.lastGradient" => widgets::gradient_chip(ui, r, &app.session.last_gradient.gradient),
                 _ => widgets::paint_chip(ui, r, &Paint::None),
             }
-            if resp.on_hover_text(tip).clicked() {
+            if resp.on_hover_text(tl!(tip)).clicked() {
                 clicked = Some(cmd);
             }
         }
@@ -275,7 +307,7 @@ fn bottom_controls(app: &mut VectorcraftApp, ui: &mut Ui, t: &Tokens) {
             vectorcraft_engine::DrawMode::Behind => 1,
             vectorcraft_engine::DrawMode::Inside => 2,
         };
-        if widgets::icon_button(ui, modes[m], &format!("{} (Shift+D)", names[m]), m != 0, 26.0).clicked() {
+        if widgets::icon_button(ui, modes[m], &format!("{} (Shift+D)", tl!(names[m])), m != 0, 26.0).clicked() {
             app.run("view.drawMode", json!({})).ok();
         }
         if widgets::icon_button(ui, "dc-screen-mode", "Change Screen Mode (F)", false, 26.0).clicked() {
@@ -327,7 +359,7 @@ fn flyout(app: &mut VectorcraftApp, ctx: &egui::Context) {
                         ui.painter().text(
                             r.left_center() + vec2(52.0, 0.0),
                             egui::Align2::LEFT_CENTER,
-                            tool.label,
+                            tl!(tool.label),
                             egui::FontId::proportional(13.0),
                             color,
                         );
@@ -355,6 +387,26 @@ fn flyout(app: &mut VectorcraftApp, ctx: &egui::Context) {
         app.ui.flyout = None;
     }
     let _ = theme::semibold;
+}
+
+/// The Puppet Warp tool's Control bar: Expand (how far the mesh reaches past the art), Show Mesh
+/// and Select All Pins.
+fn puppet_warp_options(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let opts = app.session.tool_options();
+    ui.label(egui::RichText::new(tl!("Expand:")).size(12.0).color(t.text));
+    let unit = app.session.general_unit();
+    if let Some(v) = widgets::num_field(ui, ("cb-tool", "expand"), opts["expand"].as_f64(), unit, 64.0) {
+        app.run("tool.setOption", json!({ "key": "expand", "value": v })).ok();
+    }
+    let show = opts["showMesh"].as_bool().unwrap_or(true);
+    if widgets::check(ui, "Show Mesh", show, true) {
+        app.run("tool.setOption", json!({ "key": "showMesh", "value": !show })).ok();
+    }
+    if widgets::flat_button(ui, "Select All Pins", 104.0).clicked() {
+        app.run("tool.setOption", json!({ "key": "selectAllPins", "value": true })).ok();
+    }
+    ui.separator();
 }
 
 #[cfg(test)]
@@ -446,7 +498,35 @@ pub(crate) mod tests {
         crate::dialogs::confirm(&mut app).unwrap();
         let o = app.session.prefs.eyedropper;
         assert!(o.pick_up.appearance.transparency && !o.apply.appearance.transparency && o.apply.appearance.fill.color);
-        assert!(app.run("tool.options", json!({"tool": "zoom"})).is_err());
+        assert!(app.run("tool.options", json!({"tool": "lasso"})).is_err());
+    }
+
+    #[test]
+    fn double_clicking_the_hand_zoom_and_transform_tools() {
+        let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        app.run("file.new", json!({"width": 300, "height": 200})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(660.0, 460.0)));
+        app.run("view.setZoom", json!({"zoom": 333, "center": [10, 10]})).unwrap();
+        // Hand: the artboard fits the window. Zoom: 100%.
+        app.run("tool.options", json!({"tool": "hand"})).unwrap();
+        let v = *app.view().unwrap();
+        assert_eq!((v.center.x, v.center.y, v.zoom), (150.0, 100.0, 2.0));
+        app.run("tool.options", json!({"tool": "zoom"})).unwrap();
+        assert_eq!(app.view().unwrap().zoom, 1.0);
+        // The transform tools open their dialogs, like Object › Transform: not with nothing selected.
+        assert_eq!(app.run("tool.options", json!({"tool": "rotate"})), Err("nothing selected".into()));
+        assert!(app.ui.dialog.is_none());
+        let id = app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 40, "height": 20})).unwrap()["id"].as_u64().unwrap();
+        for tool in ["rotate", "scale", "reflect", "shear"] {
+            app.run("tool.options", json!({"tool": tool})).unwrap();
+            assert_eq!(app.ui.dialog.take().map(|d| d.kind), Some(tool.to_string()));
+        }
+        // OK in Rotate turns the selection about its centre.
+        app.run("tool.options", json!({"tool": "rotate"})).unwrap();
+        app.ui.dialog.as_mut().unwrap().fields.insert("angle".into(), json!(90));
+        crate::dialogs::confirm(&mut app).unwrap();
+        let b = app.session.active().unwrap().doc.node(vectorcraft_doc::NodeId(id)).unwrap().geometric_bounds().unwrap();
+        assert!((b.x0 - 20.0).abs() < 1e-9 && (b.y0 - 0.0).abs() < 1e-9 && (b.width() - 20.0).abs() < 1e-9, "{b:?}");
     }
 
     #[test]

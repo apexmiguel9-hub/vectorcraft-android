@@ -11,11 +11,14 @@
 //!   `preserveShape` (`clippingMask` | `transparency`), `fidelity` (0..100),
 //!   `distortAppearance`, `distortLinearGradients`, `distortPatternFills`.
 //!
+//! The Control bar's envelope controls ([`control_bar`]) live here too.
+//!
 //! Every dialog also has `preview`. They open with the selected envelope's values
 //! (`object.envelope.info`); the menu items and shortcuts of Make with Warp and Make with Mesh
 //! open the Reset variant while an envelope is selected, as the reference app's do.
 
 use serde_json::{Value, json};
+use vectorcraft_doc::{EnvelopeKind, NodeKind};
 use vectorcraft_render::effects::WARP_STYLES;
 
 use super::{DialogSpec, form};
@@ -41,10 +44,10 @@ pub(super) const SPEC: DialogSpec = DialogSpec { heading, body, confirm, preview
 
 fn heading(d: &Dialog) -> String {
     match d.kind.as_str() {
-        WARP => "Warp Options",
-        MESH if d.bool("reset") => "Reset Envelope Mesh",
-        MESH => "Envelope Mesh",
-        _ => "Envelope Options",
+        WARP => tl!("Warp Options"),
+        MESH if d.bool("reset") => tl!("Reset Envelope Mesh"),
+        MESH => tl!("Envelope Mesh"),
+        _ => tl!("Envelope Options"),
     }
     .into()
 }
@@ -140,44 +143,44 @@ fn count(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str) {
 
 fn warp_body(ui: &mut egui::Ui, d: &mut Dialog) {
     let styles: Vec<(&str, &str)> = WARP_STYLES.iter().map(|(id, label)| (*id, label.trim_end_matches('…'))).collect();
-    form::choice(ui, d, "style", "Style:", (LABEL_W, 160.0), &styles);
+    form::choice(ui, d, "style", tl!("Style:"), (LABEL_W, 160.0), &styles);
     let horizontal = d.bool("horizontal");
     widgets::label_row(ui, "", LABEL_W, |ui| {
-        for (h, label) in [(true, "Horizontal"), (false, "Vertical")] {
+        for (h, label) in [(true, tl!("Horizontal")), (false, tl!("Vertical"))] {
             if widgets::radio(ui, label, horizontal == h, true) {
                 set(d, "horizontal", json!(h));
             }
             ui.add_space(10.0);
         }
     });
-    percent(ui, d, "bend", "Bend:");
+    percent(ui, d, "bend", tl!("Bend:"));
     ui.add_space(6.0);
-    widgets::subheader(ui, "Distortion");
-    percent(ui, d, "h", "Horizontal:");
-    percent(ui, d, "v", "Vertical:");
+    widgets::subheader(ui, tl!("Distortion"));
+    percent(ui, d, "h", tl!("Horizontal:"));
+    percent(ui, d, "v", tl!("Vertical:"));
 }
 
 fn mesh_body(ui: &mut egui::Ui, d: &mut Dialog) {
-    count(ui, d, "rows", "Rows:");
-    count(ui, d, "cols", "Columns:");
+    count(ui, d, "rows", tl!("Rows:"));
+    count(ui, d, "cols", tl!("Columns:"));
     if d.bool("reset") {
         ui.add_space(4.0);
-        form::check(ui, d, "maintainShape", "Maintain Envelope Shape");
+        form::check(ui, d, "maintainShape", tl!("Maintain Envelope Shape"));
     }
 }
 
 fn options_body(ui: &mut egui::Ui, d: &mut Dialog) {
-    widgets::subheader(ui, "Rasters");
+    widgets::subheader(ui, tl!("Rasters"));
     ui.horizontal(|ui| {
         ui.add_space(12.0);
-        form::check(ui, d, "antiAlias", "Anti-Alias");
+        form::check(ui, d, "antiAlias", tl!("Anti-Alias"));
     });
     ui.add_space(4.0);
-    widgets::subheader(ui, "Preserve Shape Using:");
+    widgets::subheader(ui, tl!("Preserve Shape Using:"));
     let clip = d.str("preserveShape") != "transparency";
     ui.horizontal(|ui| {
         ui.add_space(12.0);
-        for (value, label) in [("clippingMask", "Clipping Mask"), ("transparency", "Transparency")] {
+        for (value, label) in [("clippingMask", tl!("Clipping Mask")), ("transparency", tl!("Transparency"))] {
             if widgets::radio(ui, label, clip == (value == "clippingMask"), true) {
                 set(d, "preserveShape", json!(value));
             }
@@ -186,12 +189,12 @@ fn options_body(ui: &mut egui::Ui, d: &mut Dialog) {
     });
     ui.add_space(4.0);
     let rail = Tokens::get(ui.ctx()).input_border;
-    form::slider_w(ui, d, ("fidelity", "Fidelity:", LABEL_W), 0.0..=100.0, "", &move |_| rail);
+    form::slider_w(ui, d, ("fidelity", tl!("Fidelity:"), LABEL_W), 0.0..=100.0, "", &move |_| rail);
     ui.add_space(4.0);
-    form::check(ui, d, "distortAppearance", "Distort Appearance");
+    form::check(ui, d, "distortAppearance", tl!("Distort Appearance"));
     // Gradients and patterns bend only with the appearance.
     let appearance = d.bool("distortAppearance");
-    for (key, label) in [("distortLinearGradients", "Distort Linear Gradients"), ("distortPatternFills", "Distort Pattern Fills")] {
+    for (key, label) in [("distortLinearGradients", tl!("Distort Linear Gradients")), ("distortPatternFills", tl!("Distort Pattern Fills"))] {
         let on = d.bool(key);
         ui.horizontal(|ui| {
             ui.add_space(20.0);
@@ -219,6 +222,97 @@ fn body(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) -> bool {
 fn confirm(app: &mut VectorcraftApp, d: &Dialog) -> Result<Value, String> {
     let (cmd, p, _) = command(d);
     form::commit_preview(app, cmd, p)
+}
+
+/// What the Control bar shows for the selected envelope.
+#[derive(Clone, Debug, PartialEq)]
+enum Bar {
+    Warp { style: String, bend: f64, h: f64, v: f64, horizontal: bool },
+    Mesh { rows: u32, cols: u32 },
+    TopObject,
+}
+
+/// The selected envelope (or the one whose contents are selected), whether its contents are being
+/// edited, and its settings.
+fn bar_of(app: &VectorcraftApp) -> Option<(bool, Bar)> {
+    let st = app.session.active()?;
+    let env = st.selection.objects.first().and_then(|id| vectorcraft_doc::live::envelope_of(&st.doc, *id))?;
+    let NodeKind::Envelope { kind, editing, .. } = &env.kind else { return None };
+    let bar = match kind {
+        EnvelopeKind::Warp { style, bend, h, v, horizontal } => {
+            Bar::Warp { style: style.clone(), bend: *bend, h: *h, v: *v, horizontal: *horizontal }
+        }
+        EnvelopeKind::Mesh { rows, cols, .. } => Bar::Mesh { rows: *rows, cols: *cols },
+        EnvelopeKind::TopObject { .. } => Bar::TopObject,
+    };
+    Some((*editing, bar))
+}
+
+/// The Control bar's envelope controls (as in the reference app) while an envelope, or content
+/// whose envelope is being edited, is selected: Edit Envelope / Edit Contents; a warp's style,
+/// orientation, bend and distortions, or a mesh's rows and columns; Reset Envelope Shape; and
+/// Envelope Options.
+pub fn control_bar(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
+    let Some((editing, bar)) = bar_of(app) else { return };
+    let mut run: Option<(&str, Value)> = None;
+    ui.separator();
+    for (contents, icon, tip) in [(false, "dc-mesh", tl!("Edit Envelope")), (true, "shapes", tl!("Edit Contents"))] {
+        if widgets::icon_button(ui, icon, tip, editing == contents, 24.0).clicked() && editing != contents {
+            run = Some(("object.envelope.editContents", json!({ "editing": contents })));
+        }
+    }
+    ui.add_space(4.0);
+    let field = |ui: &mut egui::Ui, key: &str, label: &str, value: f64, suffix: &str| {
+        widgets::dim_label(ui, label);
+        widgets::plain_field(ui, ("cb-envelope", key), value, suffix, 0, 46.0)
+    };
+    match &bar {
+        Bar::Warp { style, bend, h, v, horizontal } => {
+            let styles: Vec<&str> = WARP_STYLES.iter().map(|(_, l)| l.trim_end_matches('…')).collect();
+            let current = WARP_STYLES.iter().find(|(id, _)| id == style).map_or(style.as_str(), |(_, l)| l.trim_end_matches('…'));
+            widgets::dim_label(ui, tl!("Style:"));
+            if let Some((id, _)) = widgets::dropdown(ui, "cb-envelope-style", current, &styles, 110.0).and_then(|i| WARP_STYLES.get(i)) {
+                run = Some((OPTIONS_CMD, json!({ "style": id })));
+            }
+            for (h, label) in [(true, tl!("Horizontal")), (false, tl!("Vertical"))] {
+                if widgets::radio(ui, label, *horizontal == h, true) {
+                    run = Some((OPTIONS_CMD, json!({ "horizontal": h })));
+                }
+            }
+            for (key, label, value) in [("bend", tl!("Bend:"), *bend), ("h", tl!("H:"), *h), ("v", tl!("V:"), *v)] {
+                if let Some(n) = field(ui, key, label, value, "%") {
+                    run = Some((OPTIONS_CMD, json!({ key: n.round().clamp(-100.0, 100.0) })));
+                }
+            }
+        }
+        Bar::Mesh { rows, cols } => {
+            for (key, label, value) in [("rows", tl!("Rows:"), *rows), ("cols", tl!("Columns:"), *cols)] {
+                if let Some(n) = field(ui, key, label, f64::from(value), "") {
+                    run = Some((RESET_MESH, json!({ key: n.round().clamp(1.0, 50.0), "maintainShape": true })));
+                }
+            }
+        }
+        Bar::TopObject => {}
+    }
+    // Reset Envelope Shape: an unbent warp, a flat mesh.
+    let reset = match bar {
+        Bar::Warp { .. } => Some((OPTIONS_CMD, json!({"bend": 0, "h": 0, "v": 0}))),
+        Bar::Mesh { .. } => Some((RESET_MESH, json!({"maintainShape": false}))),
+        Bar::TopObject => None,
+    };
+    if let Some(r) = reset
+        && widgets::flat_button(ui, tl!("Reset"), 50.0).on_hover_text(tl!("Reset Envelope Shape")).clicked()
+    {
+        run = Some(r);
+    }
+    if widgets::icon_button(ui, "dc-options", tl!("Envelope Options"), false, 24.0).clicked() {
+        crate::menus::invoke(app, OPTIONS_CMD, json!({}));
+    }
+    if let Some((cmd, p)) = run
+        && let Err(e) = app.run(cmd, p)
+    {
+        app.status(e);
+    }
 }
 
 #[cfg(test)]
@@ -342,5 +436,56 @@ mod tests {
         assert!(!app.session.in_interaction());
         super::super::confirm(&mut app).unwrap();
         assert_eq!(app.session.execute("object.envelope.info", &json!({})).unwrap()["distortAppearance"], json!(false));
+    }
+
+    #[test]
+    fn edit_contents_reads_edit_envelope_while_editing() {
+        let (mut app, _) = app_with_rect();
+        app.run(MAKE_WARP, json!({})).unwrap();
+        let label = |app: &VectorcraftApp| crate::menus::dynamic_label(app, "object.envelope.editContents", "Edit Contents");
+        assert_eq!(label(&app), "Edit Contents");
+        app.run("object.envelope.editContents", json!({})).unwrap();
+        assert_eq!(label(&app), "Edit Envelope");
+        assert!(crate::menus::shortcut_of("object.envelope.editContents").is_none(), "its reference shortcut is Paste in Place's here");
+    }
+
+    /// One Control bar frame with `events`; the rectangles of its 24 pt icon buttons, left to right.
+    fn bar_frame(app: &mut VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<egui::Rect> {
+        let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1800.0, 600.0)));
+        let mut out = ctx.run_ui(egui::RawInput { events, screen_rect, ..Default::default() }, |ui| crate::chrome::control_bar(app, ui));
+        out.textures_delta.clear();
+        let mut r: Vec<egui::Rect> = ctx.viewport(|vp| {
+            vp.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == egui::vec2(24.0, 24.0)).map(|w| w.rect).collect()
+        });
+        r.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        r
+    }
+
+    #[test]
+    fn the_control_bar_switches_to_edit_contents_and_back() {
+        let (mut app, rect) = app_with_rect();
+        app.run(MAKE_WARP, json!({"style": "arch"})).unwrap();
+        assert!(bar_of(&app).is_some_and(|(editing, bar)| !editing && matches!(bar, Bar::Warp { ref style, .. } if style == "arch")));
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let click = |app: &mut VectorcraftApp, at: egui::Pos2| {
+            let button =
+                |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            bar_frame(app, &ctx, vec![egui::Event::PointerMoved(at), button(true)]);
+            bar_frame(app, &ctx, vec![button(false)]);
+        };
+        bar_frame(&mut app, &ctx, vec![]);
+        let buttons = bar_frame(&mut app, &ctx, vec![]);
+        // Edit Envelope, Edit Contents come first.
+        click(&mut app, buttons[1].center());
+        assert_eq!(app.session.doc().unwrap().selection.objects, vec![rect], "Edit Contents selects the content");
+        assert!(bar_of(&app).is_some_and(|(editing, _)| editing), "the content keeps the envelope's controls");
+        let buttons = bar_frame(&mut app, &ctx, vec![]);
+        click(&mut app, buttons[0].center());
+        assert!(bar_of(&app).is_some_and(|(editing, _)| !editing));
+        // A mesh envelope shows its rows and columns instead.
+        app.run(RESET_MESH, json!({"rows": 3, "cols": 2})).unwrap();
+        assert_eq!(bar_of(&app).map(|b| b.1), Some(Bar::Mesh { rows: 3, cols: 2 }));
+        bar_frame(&mut app, &ctx, vec![]);
     }
 }

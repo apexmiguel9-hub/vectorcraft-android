@@ -17,11 +17,15 @@ pub struct View {
     pub fitted: bool,
     /// View rotation in degrees (Rotate View tool).
     pub rotation: f64,
+    /// The artboard the status bar's navigator is on (an index): Fit Artboard in Window and Actual
+    /// Size show it.
+    #[serde(default)]
+    pub artboard: usize,
 }
 
 impl Default for View {
     fn default() -> Self {
-        Self { zoom: 1.0, center: Point::new(306.0, 396.0), fitted: false, rotation: 0.0 }
+        Self { zoom: 1.0, center: Point::new(306.0, 396.0), fitted: false, rotation: 0.0, artboard: 0 }
     }
 }
 
@@ -34,6 +38,7 @@ impl View {
                 center: v.center,
                 fitted: true,
                 rotation: if v.rotation.is_finite() { v.rotation } else { 0.0 },
+                artboard: 0,
             },
             _ => Self::default(),
         }
@@ -69,6 +74,24 @@ pub enum DockTab {
     Properties,
     Layers,
     Libraries,
+}
+
+impl DockTab {
+    /// The tab's panel id (`window.panel`), English label and icon (when the dock is collapsed).
+    pub fn info(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            DockTab::Properties => ("properties", "Properties", "dc-options"),
+            DockTab::Layers => ("layers", "Layers", "layers"),
+            DockTab::Libraries => ("libraries", "Libraries", "library"),
+        }
+    }
+
+    pub const ALL: [DockTab; 3] = [DockTab::Properties, DockTab::Layers, DockTab::Libraries];
+
+    /// The tab whose panel id is `id`.
+    pub fn from_id(id: &str) -> Option<DockTab> {
+        DockTab::ALL.into_iter().find(|t| t.info().0 == id)
+    }
 }
 
 /// Panels that live as collapsed icons in the dock (Essentials Classic).
@@ -207,9 +230,19 @@ impl Dialog {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiState {
+    /// The interface language older versions saved here (`ja`, `cs`…). It now lives in the
+    /// `interfaceLanguage` preference, which [`crate::prefs_dialog::restore`] carries it over to;
+    /// it is never written back.
+    #[serde(rename = "language", skip_serializing)]
+    pub legacy_language: Option<String>,
     pub brightness: Brightness,
     pub dock_tab: DockTab,
-    /// Icon panel currently popped out of the collapsed column.
+    /// The dock's tabbed group (Properties | Layers | Libraries) is collapsed to icons at the top of
+    /// the icon column (the dock's double arrow, `window.collapseDock`).
+    #[serde(default)]
+    pub dock_collapsed: bool,
+    /// Icon panel currently popped out of the collapsed column (also `properties`, `layers` or
+    /// `libraries` while the dock is collapsed).
     pub open_panel: Option<String>,
     pub control_bar: bool,
     pub toolbar: bool,
@@ -230,6 +263,9 @@ pub struct UiState {
     pub flyout: Option<usize>,
     /// Last tool shown for each toolbar group (flyout selection sticks).
     pub group_tool: Vec<String>,
+    /// The selection tool used last (Selection, Direct Selection or Group Selection): a Cmd press
+    /// with any other tool drags with it.
+    pub last_selection_tool: String,
     pub status: String,
     pub palette_open: bool,
     pub palette_query: String,
@@ -342,8 +378,10 @@ impl UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            legacy_language: None,
             brightness: Brightness::MediumDark,
             dock_tab: DockTab::Properties,
+            dock_collapsed: false,
             open_panel: None,
             control_bar: false,
             toolbar: true,
@@ -357,6 +395,7 @@ impl Default for UiState {
             dialog: None,
             flyout: None,
             group_tool: vectorcraft_tools::TOOL_GROUPS.iter().map(|g| g[0].id.to_string()).collect(),
+            last_selection_tool: "selection".into(),
             status: String::new(),
             palette_open: false,
             palette_query: String::new(),

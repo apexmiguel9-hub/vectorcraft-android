@@ -7,6 +7,8 @@ use vectorcraft_doc::CharStyle;
 /// by the character style (`kerning`, `all_caps`, `tracking`); the rest are layout-wide options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OtFeatures {
+    /// Vertical glyph alternates (`vert`), set by the writing direction.
+    pub vertical: bool,
     /// Standard ligatures (`liga`, `clig`). Suppressed automatically when tracking is non-zero.
     pub ligatures: bool,
     /// Contextual alternates (`calt`).
@@ -30,6 +32,7 @@ pub struct OtFeatures {
 impl Default for OtFeatures {
     fn default() -> Self {
         Self {
+            vertical: false,
             ligatures: true,
             contextual: true,
             discretionary_ligatures: false,
@@ -137,6 +140,11 @@ impl OtFeatures {
             if on {
                 v.push(f(tag, true));
             }
+        }
+        if self.vertical {
+            // Not `vrt2`: its glyphs are already turned on their side, and the layout turns Latin
+            // and digits itself (they would lie upside down, and tate-chu-yoko break).
+            v.push(f(b"vert", true));
         }
         v
     }

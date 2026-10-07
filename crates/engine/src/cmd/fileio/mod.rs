@@ -105,7 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Export Selection…",
             ["File"],
             None,
-            "{path?, format?: png|jpg|webp|svg|svgz|pdf (default: from the extension, else png), scale?: 1, …the format's options} the selected objects cropped to their bounds (template layers left out) → {path, bytes, bounds} (no path → {dataBase64, bounds})",
+            "{path?, format?: png|jpg|webp|svg|svgz|pdf (default: from the extension, else png), scale?: 1, …the format's options} the selected objects cropped to their bounds (template layers left out) → {path, format, bytes, warnings, bounds} (no path → {dataBase64, format, bytes, warnings, bounds}); warnings say what the format approximated or left out, as for document.export",
             has_selection,
             export::export_selection
         ),
@@ -580,6 +580,18 @@ pub const OPEN_EXTS: &[&str] = &[
     "wmf",
     "eps",
 ];
+
+/// The extension that picks each writable format when exporting (the format's first; PNG-8 shares
+/// `.png` with PNG, so `.png` comes once), in [`FORMATS`] order.
+pub fn export_extensions() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Vec::new();
+    for e in FORMATS.iter().filter(|f| f.write).filter_map(|f| f.extensions.first()) {
+        if !v.contains(e) {
+            v.push(e);
+        }
+    }
+    v
+}
 
 /// Text files: File → Place sets them as area type (Text Import Options).
 pub const TEXT_EXTS: &[&str] = &["txt"];

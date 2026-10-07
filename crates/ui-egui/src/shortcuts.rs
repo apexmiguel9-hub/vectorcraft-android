@@ -75,7 +75,22 @@ pub(crate) fn all_shortcuts() -> Vec<(KeyboardShortcut, &'static str, serde_json
 /// is ignored). `native`: the system menu already handles the chord as written, so only that
 /// alias is left to match here.
 pub(crate) fn consume(i: &mut egui::InputState, sc: &KeyboardShortcut, native: bool) -> bool {
-    (!native && i.consume_shortcut(sc)) || (sc.logical_key == Key::Equals && i.consume_key(sc.modifiers, Key::Plus))
+    (!native && i.consume_shortcut(sc))
+        || (sc.logical_key == Key::Equals && i.consume_key(sc.modifiers, Key::Plus))
+        || (sc.modifiers.shift && shifted(sc.logical_key).is_some_and(|k| i.consume_key(sc.modifiers, k)))
+}
+
+/// The key a shifted punctuation key arrives as: egui reports the character typed, so Cmd+Shift+[
+/// comes in as Cmd+Shift+`{` (US-style layouts).
+fn shifted(k: Key) -> Option<Key> {
+    Some(match k {
+        Key::OpenBracket => Key::OpenCurlyBracket,
+        Key::CloseBracket => Key::CloseCurlyBracket,
+        Key::Slash => Key::Questionmark,
+        Key::Semicolon => Key::Colon,
+        Key::Backslash => Key::Pipe,
+        _ => return None,
+    })
 }
 
 /// Keys that paste with Cmd, or alone. (Shift+Insert is left out: Ctrl+Insert copies.)
@@ -129,6 +144,49 @@ impl PasteChord {
     }
 }
 
+/// End an IME composition outside the IME (a click away, the IME going away): the
+/// marked text stays as typed, and the system IME is told to drop it.
+pub(crate) fn keep_marked_text(app: &mut VectorcraftApp) {
+    let Some(m) = app.ime_marked.take() else { return };
+    app.ime_discard = true;
+    if app.session.tool_composing() {
+        // Errors are already reported by the engine's interaction.
+        let _ = app.session.tool_text(&m, app.view_info());
+    }
+}
+
+/// Typed text and IME events, in the order they came, to the Type tool.
+fn type_text(app: &mut VectorcraftApp, ctx: &egui::Context) {
+    let view = app.view_info();
+    // Switching apps mid-composition needs nothing: the macOS IME keeps its marked text and goes
+    // on with it when the window comes back (measured with Kotoeri), as the tool does.
+    let events: Vec<egui::Event> =
+        ctx.input(|i| i.events.iter().filter(|e| matches!(e, egui::Event::Text(_) | egui::Event::Ime(_))).cloned().collect());
+    for e in events {
+        // Errors are already reported by the engine's interaction (a failed preview keeps it).
+        let _ = match e {
+            // Keys the IME passed through come as text only when nothing is marked.
+            egui::Event::Text(t) if !app.session.tool_composing() => app.session.tool_text(&t, view),
+            egui::Event::Ime(egui::ImeEvent::Preedit { text, active_range_chars }) => {
+                app.ime_marked = Some(text.clone()).filter(|t| !t.is_empty());
+                app.session.tool_preedit(&text, active_range_chars, view)
+            }
+            // A bare line break confirms the composition (Enter): the marked text, not a newline.
+            egui::Event::Ime(egui::ImeEvent::Commit(t)) if t == "\n" || t == "\r" => {
+                keep_marked_text(app);
+                Ok(vec![])
+            }
+            egui::Event::Ime(egui::ImeEvent::Commit(t)) => {
+                app.ime_marked = None;
+                app.session.tool_text(&t, view)
+            }
+            // `DeleteSurrounding` isn't sent by egui-winit (desktop); the web host has no IME
+            // path to the canvas yet.
+            _ => Ok(vec![]),
+        };
+    }
+}
+
 pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     // Followed before anything returns, so a key typed in a field isn't taken for a paste.
     let textless_paste = ctx.input(|i| app.paste_chord.textless_paste(&i.events));
@@ -144,10 +202,12 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     }
     let typing = ctx.egui_wants_keyboard_input();
     let view = app.view_info();
+    // While an IME composes, Enter and Escape are its own (confirm / cancel).
+    let composing = app.session.tool_composing();
     // Tool keys first (Enter/Escape end paths; arrows change polygon sides while dragging).
     let busy = app.session.tool_busy();
     for (k, tk) in [(Key::Enter, ToolKey::Enter), (Key::Escape, ToolKey::Escape)] {
-        if !typing && ctx.input(|i| i.key_pressed(k)) {
+        if !typing && !composing && ctx.input(|i| i.key_pressed(k)) {
             // A key the tool claims (Esc with a loaded place cursor) is only the tool's.
             let claimed = app.session.tool_claims_key(tk, view);
             let r = app.session.tool_key(tk, Mods::default(), view);
@@ -168,12 +228,17 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
     if typing {
         return;
     }
-    // Type tool editing: text and editing keys go to the tool.
+    // Type tool editing: text, IME composition and editing keys go to the tool.
     if app.session.tool_wants_text() {
-        let texts: Vec<String> =
-            ctx.input(|i| i.events.iter().filter_map(|e| if let egui::Event::Text(t) = e { Some(t.clone()) } else { None }).collect());
-        for t in texts {
-            let _ = app.session.tool_text(&t, view);
+        type_text(app, ctx);
+        // Keys of a frame that began composing are the IME's too (a Backspace that empties the
+        // marked text must not delete the committed character before it).
+        if composing || app.session.tool_composing() {
+            // The IME owns the keyboard until it commits: no editing keys, clipboard or shortcuts.
+            ctx.input_mut(|i| {
+                i.events.retain(|e| !matches!(e, egui::Event::Key { .. } | egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)))
+            });
+            return;
         }
         // Editing keys with modifiers, clipboard and Cmd+A.
         crate::panels::character::route_type_input(app, ctx);
@@ -220,6 +285,19 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 let _ = app.session.tool_key(tk, Mods::default(), view);
             }
         }
+        // Digits (5 while dragging with the Perspective Selection tool), once per press.
+        let digits: Vec<u8> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key { key, pressed: true, repeat: false, .. } => digit_of(*key),
+                    _ => None,
+                })
+                .collect()
+        });
+        for d in digits {
+            let _ = app.session.tool_key(ToolKey::Digit(d), Mods::default(), view);
+        }
         return;
     }
     // Keys the active tool claims ahead of their shortcuts (the Gradient tool's selected stop:
@@ -237,6 +315,28 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
             let r = app.session.tool_key(tk, crate::canvas::mods(m, false), view);
             crate::canvas::apply_requests(app, r);
             return;
+        }
+    }
+    // Digits the active tool or the perspective grid takes (1–4 pick the plane while it shows).
+    if !(m.command || m.alt || m.ctrl) {
+        let digits: Vec<(u8, Key)> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key { key, pressed: true, .. } => digit_of(*key).map(|d| (d, *key)),
+                    _ => None,
+                })
+                .collect()
+        });
+        for (d, k) in digits {
+            if app.session.tool_claims_key(ToolKey::Digit(d), view) && ctx.input_mut(|i| i.consume_key(m, k)) {
+                // The digit's text is the key's too: no single-key shortcut sees it.
+                let text = d.to_string();
+                ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Text(t) if *t == text)));
+                let r = app.session.tool_key(ToolKey::Digit(d), crate::canvas::mods(m, false), view);
+                crate::canvas::apply_requests(app, r);
+                return;
+            }
         }
     }
     // Command shortcuts.
@@ -286,15 +386,25 @@ pub fn handle(app: &mut VectorcraftApp, ctx: &egui::Context) {
         }
         let upper = text.to_uppercase();
         let key = if m.shift && text.chars().all(|c| c.is_alphabetic()) { format!("Shift+{upper}") } else { upper.clone() };
+        // A shifted punctuation character can also be written with its Shift (the Curvature tool's
+        // Shift+~ arrives as `~`).
+        let shifted = m.shift.then(|| format!("Shift+{text}"));
+        let lookup = |find: fn(&str) -> Option<&'static str>| find(&key).or_else(|| find(&text)).or_else(|| shifted.as_deref().and_then(find));
         // Single-key command shortcuts (X, Shift+X, D, /, Shift+D, F, Shift+F by default).
-        if let Some(id) = crate::shortcut_editor::command_for_key(&key).or_else(|| crate::shortcut_editor::command_for_key(&text)) {
+        if let Some(id) = lookup(crate::shortcut_editor::command_for_key) {
             let _ = app.run(id, json!({}));
             continue;
         }
-        if let Some(t) = crate::shortcut_editor::tool_for_key(&key).or_else(|| crate::shortcut_editor::tool_for_key(&text)) {
+        if let Some(t) = lookup(crate::shortcut_editor::tool_for_key) {
             app.select_tool(t);
         }
     }
+}
+
+/// The digit a number-row or keypad key types.
+fn digit_of(k: Key) -> Option<u8> {
+    const DIGITS: [Key; 10] = [Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9];
+    DIGITS.iter().position(|d| *d == k).map(|i| i as u8)
 }
 
 #[cfg(test)]
@@ -352,6 +462,36 @@ mod tests {
     }
 
     #[test]
+    fn shifted_punctuation_shortcuts_work_as_typed() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 200, "height": 200})).unwrap();
+        let a = app.session.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 50, "height": 50})).unwrap()["id"].clone();
+        let b = app.session.execute("shape.ellipse", &json!({"x": 20, "y": 20, "width": 50, "height": 50})).unwrap()["id"].clone();
+        app.session.execute("select.set", &json!({"ids": [a]})).unwrap();
+        let order =
+            |app: &VectorcraftApp| -> Vec<u64> { app.session.doc().unwrap().doc.layers[0].children().unwrap().iter().map(|n| n.id.0).collect() };
+        let (a, b) = (a.as_u64().unwrap(), b.as_u64().unwrap());
+        assert_eq!(order(&app), [a, b]);
+        let press = |key, modifiers| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers };
+        let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        // Recorded in the Keyboard Shortcuts editor, they read as the keys (and so conflict).
+        assert_eq!(crate::shortcut_editor::chord_from_event(Key::CloseCurlyBracket, cmd_shift).as_deref(), Some("Cmd+Shift+]"));
+        assert_eq!(crate::shortcut_editor::chord_from_event(Key::Questionmark, cmd_shift).as_deref(), Some("Cmd+Shift+/"));
+        // Cmd+Shift+] arrives as Cmd+Shift+`}`, Cmd+Shift+[ as Cmd+Shift+`{`.
+        frame(&mut app, vec![press(Key::CloseCurlyBracket, cmd_shift)]);
+        assert_eq!(order(&app), [b, a], "Bring to Front");
+        frame(&mut app, vec![press(Key::OpenCurlyBracket, cmd_shift)]);
+        assert_eq!(order(&app), [a, b], "Send to Back");
+        // Cmd+Shift+/ arrives as Cmd+Shift+`?`: Search Commands.
+        frame(&mut app, vec![press(Key::Questionmark, cmd_shift)]);
+        assert!(app.ui.palette_open, "Search Commands");
+        app.ui.palette_open = false;
+        // The Curvature tool's Shift+~ arrives as the text `~` with Shift.
+        frame(&mut app, vec![egui::Event::ModifiersChanged(Modifiers::SHIFT), egui::Event::Text("~".into())]);
+        assert_eq!(app.session.tool_id(), "curvature");
+    }
+
+    #[test]
     fn plus_typed_any_way_zooms_in() {
         assert_eq!(parse("Cmd++"), parse("Cmd+="), "`+` and `=` are one chord key");
         assert_eq!(crate::shortcut_editor::chord_from_event(Key::Plus, Modifiers::COMMAND).as_deref(), Some("Cmd+="), "a recorded `+` too");
@@ -376,6 +516,29 @@ mod tests {
         assert_eq!(zoom(&mut app), before, "left to the system menu");
         frame(&mut app, vec![press(Key::Plus, Modifiers::COMMAND)]);
         assert!(zoom(&mut app) > before);
+    }
+
+    #[test]
+    fn digit_keys_reach_a_dragging_tool_once_per_press() {
+        use vectorcraft_tools::{PointerEvent, PointerKind};
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), Default::default());
+        app.session.execute("file.new", &json!({"width": 800, "height": 600})).unwrap();
+        app.session.execute("perspective.grid.preset", &json!({"kind": 2})).unwrap();
+        let id = app.session.execute("shape.rectangle", &json!({"x": 450, "y": 380, "width": 60, "height": 60})).unwrap()["id"].clone();
+        app.session.execute("perspective.attach", &json!({"ids": [id], "plane": "right"})).unwrap();
+        app.select_tool("perspectiveSelection");
+        let v = app.view_info();
+        let c =
+            app.session.doc().unwrap().doc.node(vectorcraft_engine::doc::NodeId(id.as_u64().unwrap())).unwrap().geometric_bounds().unwrap().center();
+        app.session.pointer(&PointerEvent::new(PointerKind::Down, c.x, c.y), v).unwrap();
+        app.session.pointer(&PointerEvent::new(PointerKind::Drag, c.x + 30.0, c.y), v).unwrap();
+        let key = |repeat| egui::Event::Key { key: Key::Num5, physical_key: None, pressed: true, repeat, modifiers: Modifiers::NONE };
+        // A held key repeats: only its first press toggles.
+        frame(&mut app, vec![key(false), key(true)]);
+        let preview = app.session.doc().unwrap().interaction.as_ref().unwrap().preview.clone().unwrap();
+        assert_eq!((preview.0.as_str(), &preview.1["perpendicular"]), ("perspective.move", &json!(true)));
+        assert_eq!(digit_of(Key::Num0), Some(0));
+        assert_eq!(digit_of(Key::A), None);
     }
 
     #[test]

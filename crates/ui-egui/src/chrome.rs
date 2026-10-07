@@ -30,7 +30,7 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
             crate::brand::paint_mark(ui, r);
             ui.add_space(4.0);
             let on_home = app.ui.home.is_some() || app.session.active().is_none();
-            if widgets::icon_button(ui, "house", "Home", on_home, 24.0).clicked() {
+            if widgets::icon_button(ui, "house", tl!("Home"), on_home, 24.0).clicked() {
                 app.run("app.home", json!({})).ok();
             }
             ui.add_space(2.0);
@@ -48,7 +48,10 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
             let right_edge = if custom { full.right() - titlebar::WIDTH - 10.0 } else { full.right() };
             let right = egui::Rect::from_min_max(egui::pos2(menus_end + 8.0, full.top()), egui::pos2(right_edge, full.bottom()));
             let room = right.width();
-            let ws = ui.painter().layout_no_wrap(app.ui.workspace.clone(), egui::FontId::proportional(12.0), t.text);
+            // Built-in workspace names translate; the user's own stay as typed.
+            let ws_name =
+                if crate::workspaces::is_builtin(&app.ui.workspace) { tl!(&app.ui.workspace).to_string() } else { app.ui.workspace.clone() };
+            let ws = ui.painter().layout_no_wrap(ws_name, egui::FontId::proportional(12.0), t.text);
             let ws_w = (ws.size().x + 36.0).clamp(112.0, 190.0);
             let gap = ui.spacing().item_spacing.x;
             let with_search = ws_w + 8.0 + gap + 200.0;
@@ -62,7 +65,7 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
             ui.painter().rect_filled(wr, CornerRadius::same(4), if wresp.hovered() { t.hover } else { t.panel });
             ui.painter().with_clip_rect(wr.shrink2(vec2(4.0, 0.0))).galley(wr.left_center() + vec2(10.0, -ws.size().y / 2.0), ws, t.text);
             icons::paint(ui, "chevron-down", egui::Rect::from_center_size(wr.right_center() - vec2(12.0, 0.0), vec2(12.0, 12.0)), t.text_dim);
-            let wresp = wresp.on_hover_text("Switch workspace");
+            let wresp = wresp.on_hover_text(tl!("Switch workspace"));
             egui::Popup::menu(&wresp).show(|ui| crate::workspaces::popup(app, ui));
             ui.add_space(8.0);
             // Search box → command palette.
@@ -79,13 +82,13 @@ pub fn app_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 ui.painter().text(
                     r.left_center() + vec2(26.0, 0.0),
                     egui::Align2::LEFT_CENTER,
-                    "Search commands and tools",
+                    tl!("Search commands and tools"),
                     egui::FontId::proportional(11.5),
                     t.text_dim,
                 );
                 resp.clicked()
             } else {
-                widgets::icon_button(ui, "search", "Search commands and tools", false, 24.0).clicked()
+                widgets::icon_button(ui, "search", tl!("Search commands and tools"), false, 24.0).clicked()
             };
             if open_palette {
                 app.ui.palette_open = true;
@@ -116,7 +119,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     ui.painter().circle_filled(g.center_top() + vec2(0.0, 2.0 + i as f32 * 4.0), 0.9, t.text_disabled);
                 }
                 let Some(st) = app.session.active() else {
-                    ui.label(egui::RichText::new("No Document").color(t.text_dim));
+                    ui.label(egui::RichText::new(tl!("No Document")).color(t.text_dim));
                     return;
                 };
                 let sel = st.selection.objects.clone();
@@ -124,20 +127,21 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 let first = sel.first().and_then(|id| st.doc.node(*id)).cloned();
                 let anchor_mode = !st.selection.anchors.is_empty();
                 let label = match &first {
-                    Some(_) if sel.len() == 1 && anchor_mode => "Anchor Point",
+                    Some(_) if sel.len() == 1 && anchor_mode => tl!("Anchor Point"),
                     Some(vectorcraft_doc::Node { kind: NodeKind::Image(im), .. }) if sel.len() == 1 => {
                         if im.link.is_some() {
-                            "Linked File"
+                            tl!("Linked File")
                         } else {
-                            "Embedded"
+                            tl!("Embedded")
                         }
                     }
-                    _ => crate::panels::appearance::object_label(app),
+                    _ => tl!(crate::panels::appearance::object_label(app)),
                 };
                 ui.label(egui::RichText::new(label).font(theme::semibold(12.0)).color(t.text));
                 ui.add_space(6.0);
                 crate::place::control_bar_details(app, ui);
                 crate::toolbar::control_bar_options(app, ui);
+                crate::dialogs::envelope::control_bar(app, ui);
                 let shown_stroke = crate::panels::current_stroke(app);
                 let mixed = crate::panels::stroke_mixed(app, ui.ctx());
                 let weight = stroke_panel::shown_weight(app, shown_stroke.as_ref(), &mixed);
@@ -146,7 +150,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 crate::panels::paint_chip(app, ui, true, 22.0, true);
                 // The link opens the Stroke panel as a popover under it; then the weight spinner
                 // (with presets) and the width profile.
-                let link = ui.link(egui::RichText::new("Stroke:").size(12.0).color(t.text).underline()).on_hover_text("Stroke options");
+                let link = ui.link(egui::RichText::new(tl!("Stroke:")).size(12.0).color(t.text).underline()).on_hover_text(tl!("Stroke options"));
                 stroke_panel::popover(app, &link);
                 stroke_panel::weight_field(app, ui, "cb-stroke", weight, 100.0);
                 if let Some(id) = stroke_panel::profile_dropdown(app, ui, shown_stroke.as_ref().and_then(|s| s.profile.as_ref())) {
@@ -154,7 +158,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 }
                 ui.add_space(4.0);
                 ui.separator();
-                if ui.link(egui::RichText::new("Opacity:").size(12.0).color(t.text).underline()).clicked() {
+                if ui.link(egui::RichText::new(tl!("Opacity:")).size(12.0).color(t.text).underline()).clicked() {
                     app.ui.open_panel = Some("transparency".into());
                 }
                 if let Some(o) = widgets::plain_field(ui, "cb-opacity", opacity as f64 * 100.0, "%", 0, 56.0)
@@ -165,19 +169,19 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                 if !sel.is_empty() {
                     // Style picker: the selection's graphic style; its menu applies another.
                     ui.add_space(4.0);
-                    if ui.link(egui::RichText::new("Style:").size(12.0).color(t.text).underline()).clicked() {
+                    if ui.link(egui::RichText::new(tl!("Style:")).size(12.0).color(t.text).underline()).clicked() {
                         app.ui.open_panel = Some("graphicStyles".into());
                     }
                     let resp = widgets::chip_button(ui, 22.0, true, |ui, r| crate::panels::graphic_styles::paint_linked(app, ui, r))
-                        .on_hover_text("Graphic Style");
+                        .on_hover_text(tl!("Graphic Style"));
                     egui::Popup::menu(&resp).show(|ui| crate::panels::graphic_styles::picker(app, ui));
                 }
                 ui.separator();
                 if sel.is_empty() {
-                    if widgets::flat_button(ui, "Document Setup", 112.0).clicked() {
+                    if widgets::flat_button(ui, tl!("Document Setup"), 112.0).clicked() {
                         app.run("file.documentSetup", json!({})).ok();
                     }
-                    if widgets::flat_button(ui, "Preferences", 90.0).clicked() {
+                    if widgets::flat_button(ui, tl!("Preferences"), 90.0).clicked() {
                         app.run("edit.preferences", json!({})).ok();
                     }
                     return;
@@ -191,7 +195,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     ("align-center-horizontal", "Vertical Align Center", json!({"vertical": "center"})),
                     ("align-end-horizontal", "Vertical Align Bottom", json!({"vertical": "bottom"})),
                 ] {
-                    if widgets::icon_button(ui, icon, tip, false, 24.0).clicked() {
+                    if widgets::icon_button(ui, icon, tl!(tip), false, 24.0).clicked() {
                         let mut p = p;
                         if sel.len() == 1 {
                             p["to"] = json!("artboard");
@@ -210,7 +214,7 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                         if k == "height" {
                             crate::panels::transform::constrain_link(app, ui);
                         }
-                        ui.label(egui::RichText::new(lbl).size(12.0).color(t.text_dim));
+                        ui.label(egui::RichText::new(tl!(lbl)).size(12.0).color(t.text_dim));
                         if let Some(nv) = widgets::num_field(ui, ("cb", k), Some(v), units, 80.0) {
                             app.run("object.setBounds", json!({k: nv, "reference": 4, "proportional": link})).ok();
                         }
@@ -224,10 +228,10 @@ pub fn control_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
 /// "Name* @ 66.67 % (<Opacity Mask>/Opacity Mask)".
 fn tab_title(d: &vectorcraft_engine::DocState, zoom: f64, outline: bool) -> String {
     let mode = if d.doc.mask_edit.is_some() {
-        "<Opacity Mask>/Opacity Mask".to_string()
+        format!("<{0}>/{0}", tl!("Opacity Mask"))
     } else {
         let color = if d.doc.color_mode == vectorcraft_doc::ColorMode::Cmyk { "CMYK" } else { "RGB" };
-        format!("{color}/{}", if outline { "Outline" } else { "Preview" })
+        format!("{color}/{}", if outline { tl!("Outline") } else { tl!("Preview") })
     };
     format!("{}{} @ {} ({mode})", d.title(), if d.is_dirty() { "*" } else { "" }, zoom_label(zoom).replace('%', " %"))
 }
@@ -304,6 +308,7 @@ pub fn doc_tabs(app: &mut VectorcraftApp, ui: &mut Ui) {
         if pattern_edit.is_some() {
             let mut x = bar.right() - 6.0;
             for (label, cmd) in [("Cancel", "object.pattern.cancel"), ("Done", "object.pattern.done"), ("Save a Copy", "object.pattern.saveCopy")] {
+                let label = tl!(label);
                 let w = 12.0 + 7.0 * label.len() as f32;
                 let r = egui::Rect::from_min_max(egui::pos2(x - w, bar.top() + 3.0), egui::pos2(x, bar.bottom() - 3.0));
                 let resp = ui.interact(r, ui.id().with(("pat-bar", cmd)), Sense::click());
@@ -345,10 +350,10 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                             }
                         }
                         ui.separator();
-                        if ui.selectable_label(false, "Fit on Screen").clicked() {
+                        if ui.selectable_label(false, tl!("Fit on Screen")).clicked() {
                             app.run("view.fitArtboard", json!({})).ok();
                         }
-                        if ui.selectable_label(false, "Fit All").clicked() {
+                        if ui.selectable_label(false, tl!("Fit All")).clicked() {
                             app.run("view.fitAll", json!({})).ok();
                         }
                     },
@@ -367,16 +372,34 @@ pub fn status_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
                     },
                 );
                 ui.separator();
+                // The artboard navigator: first, previous, the current artboard's number, next, last.
                 let nab = app.session.active().map(|d| d.doc.artboards.len()).unwrap_or(0);
-                for icon in ["chevrons-left", "chevron-left"] {
-                    widgets::icon_button(ui, icon, "", false, 18.0);
+                let cur = app.view().map_or(0, |v| v.artboard).min(nab.saturating_sub(1));
+                let mut go = None;
+                for (icon, to) in [("chevrons-left", "first"), ("chevron-left", "previous")] {
+                    if widgets::icon_button_enabled(ui, icon, "", false, cur > 0, 18.0).clicked() {
+                        go = Some(to);
+                    }
                 }
-                ui.label(egui::RichText::new(if nab > 0 { "1" } else { "–" }).size(11.5));
-                for icon in ["chevron-right", "chevrons-right"] {
-                    widgets::icon_button(ui, icon, "", false, 18.0);
+                ui.label(egui::RichText::new(if nab > 0 { (cur + 1).to_string() } else { "–".into() }).size(11.5));
+                for (icon, to) in [("chevron-right", "next"), ("chevrons-right", "last")] {
+                    if widgets::icon_button_enabled(ui, icon, "", false, cur + 1 < nab, 18.0).clicked() {
+                        go = Some(to);
+                    }
+                }
+                if let Some(to) = go
+                    && let Err(e) = app.run("view.goToArtboard", json!({ "index": to }))
+                {
+                    app.status(e);
                 }
                 ui.separator();
-                let tool = vectorcraft_tools::tool_info(app.session.tool_id()).map(|t| t.label.trim_end_matches(" Tool")).unwrap_or("");
+                let tool = vectorcraft_tools::tool_info(app.session.tool_id())
+                    .map(|t| {
+                        // The catalog keys carry the full label ("Selection Tool"); only English drops the suffix.
+                        let shown = tl!(t.label);
+                        if crate::i18n::current() == crate::i18n::Lang::EN { shown.trim_end_matches(" Tool") } else { shown }
+                    })
+                    .unwrap_or("");
                 ui.label(egui::RichText::new(tool).size(11.5).color(t.text_dim));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
@@ -490,25 +513,123 @@ fn hint_for(tool: &str) -> Option<&'static [(&'static str, bool)]> {
         ],
         "gradient" => &[("Drag", true), (" across a selected object to set the gradient direction", false)],
         "artboard" => &[("Click", true), (" to select an artboard  |  ", false), ("Drag", true), (" on the canvas to create one", false)],
+        "width" => &[
+            ("Drag", true),
+            (" a stroke to add a width point  |  ", false),
+            ("Alt+Drag", true),
+            (" to change one side  |  ", false),
+            ("Shift+Click", true),
+            (" to select more points  |  ", false),
+            ("Double-click", true),
+            (" a point to edit it  |  ", false),
+            ("Delete", true),
+            (" to remove points", false),
+        ],
+        "puppetWarp" => &[
+            ("Click", true),
+            (" the art to add a pin  |  ", false),
+            ("Shift+Click", true),
+            (" to select more pins  |  ", false),
+            ("Drag", true),
+            (" a pin to warp  |  ", false),
+            ("Alt+Drag", true),
+            (" near a selected pin to rotate  |  ", false),
+            ("Delete", true),
+            (" to remove pins", false),
+        ],
+        "warp" => &[
+            ("Drag", true),
+            (" across paths to push them along  |  ", false),
+            ("Alt+Drag", true),
+            (" to size the brush (", false),
+            ("Shift", true),
+            (" keeps its proportions)", false),
+        ],
+        "twirl" | "pucker" | "bloat" => &[
+            ("Click or drag", true),
+            (" over paths, and hold still to keep going  |  ", false),
+            ("Alt+Drag", true),
+            (" to size the brush (", false),
+            ("Shift", true),
+            (" keeps its proportions)", false),
+        ],
+        "scallop" | "crystallize" | "wrinkle" => &[
+            ("Click or drag", true),
+            (" over paths to roughen their outlines  |  ", false),
+            ("Alt+Drag", true),
+            (" to size the brush (", false),
+            ("Shift", true),
+            (" keeps its proportions)", false),
+        ],
+        "perspectiveSelection" => &[
+            ("Drag", true),
+            (" to move in perspective  |  ", false),
+            ("Alt+Drag", true),
+            (" to copy  |  ", false),
+            ("5", true),
+            (" while dragging to move perpendicular to the plane  |  ", false),
+            ("Drag a handle", true),
+            (" to scale in perspective", false),
+        ],
+        "blend" => &[
+            ("Click", true),
+            (" an object, then another to blend them  |  ", false),
+            ("Click an anchor point", true),
+            (" to blend from it  |  ", false),
+            ("Alt+Click", true),
+            (" to set spacing and orientation", false),
+        ],
         _ => return None,
     })
 }
 
 /// The hint bar's segments for `tool`, with keys named as the menus name them (Alt and Ctrl on
 /// Windows and Linux, ⌥ and ⌘ on macOS). Tools without a hint point to Search Commands.
+/// Every hint-bar fragment (the action after the last `+` of a chord included), so the catalog tests
+/// can insist a complete language covers them.
+pub fn hint_strings() -> Vec<&'static str> {
+    let mut v = Vec::new();
+    for tool in vectorcraft_tools::catalog::all_tools() {
+        for &(text, bold) in hint_for(tool.id).unwrap_or(&[]) {
+            let text = if bold { text.rsplit_once('+').map_or(text, |(_, k)| k) } else { text };
+            if !text.is_empty() && !text.chars().all(|c| c.is_ascii_digit()) && !v.contains(&text) {
+                v.push(text);
+            }
+        }
+    }
+    v
+}
+
 fn hint_segments(tool: &str) -> Vec<(Cow<'static, str>, bool)> {
     let search;
     let segments = match hint_for(tool) {
         Some(s) => s,
         None => {
             search = match menus::shortcut_of("help.commandPalette") {
-                Some(sc) => [("Press ", false), (sc, true), (" to search every command", false)],
-                None => [("Use ", false), ("Help › Search Commands…", true), (" to search every command", false)],
+                Some(sc) => [(tl!("Press "), false), (sc, true), (tl!(" to search every command"), false)],
+                None => [(tl!("Use "), false), (tl!("Help › Search Commands…"), true), (tl!(" to search every command"), false)],
             };
             &search
         }
     };
-    segments.iter().map(|&(text, bold)| (if bold { Cow::Owned(menus::pretty_shortcut(text)) } else { Cow::Borrowed(text) }, bold)).collect()
+    segments
+        .iter()
+        .map(|&(text, bold)| {
+            // Key names ("Click", "Esc") translate; in a chord ("Alt+Drag") the modifiers are named for
+            // the platform and only the action after the last `+` translates.
+            if !bold {
+                return (Cow::Borrowed(tl!(text)), bold);
+            }
+            match text.rsplit_once('+') {
+                Some((_, key)) if !key.is_empty() => {
+                    let pretty = menus::pretty_shortcut(text);
+                    let shown = pretty.strip_suffix(key).map_or(pretty.clone(), |m| format!("{m}{}", tl!(key)));
+                    (Cow::Owned(shown), bold)
+                }
+                _ => (Cow::Owned(menus::pretty_shortcut(tl!(text))), bold),
+            }
+        })
+        .collect()
 }
 
 pub fn hint_bar(app: &mut VectorcraftApp, ui: &mut Ui) {
@@ -551,10 +672,67 @@ mod tests {
         assert!(text("zoom").contains(&pretty("Alt+Click")));
         assert!(text("rotate").contains(&pretty("Alt+Click")));
         assert!(text("eyedropper").contains(&pretty("Alt+Click")));
+        assert!(text("perspectiveSelection").contains(&pretty("Alt+Drag")) && text("perspectiveSelection").contains("perpendicular"));
         assert!(text("paintbrush").contains(&pretty("Cmd+Shift+/")), "the Search Commands shortcut");
         if !cfg!(target_os = "macos") {
             assert!(text("zoom").contains("Alt+Click") && text("paintbrush").contains("Ctrl+Shift+/"));
         }
+    }
+
+    /// One headless frame of the status bar; returns the artboard navigator's buttons, left to
+    /// right: first, previous, next, last.
+    fn navigator(app: &mut crate::VectorcraftApp, ctx: &egui::Context, events: Vec<egui::Event>) -> Vec<egui::Rect> {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 300.0));
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events, ..Default::default() }, |ui| super::status_bar(app, ui));
+        out.textures_delta.clear();
+        let size = egui::vec2(18.0, 18.0);
+        let mut r: Vec<egui::Rect> =
+            ctx.viewport(|vp| vp.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == size).map(|w| w.rect).collect());
+        r.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        r
+    }
+
+    #[test]
+    fn the_artboard_navigator_goes_to_artboards_and_fitting_shows_the_current_one() {
+        use vectorcraft_geom::Point;
+        let mut app = crate::VectorcraftApp::new(Session::new(), Default::default());
+        // Three 200 × 100 artboards in a row, centred at x = 100, 320 and 540.
+        app.run("file.new", json!({"width": 200, "height": 100})).unwrap();
+        app.run("artboard.new", json!({})).unwrap();
+        app.run("artboard.new", json!({})).unwrap();
+        app.canvas_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(460.0, 260.0)));
+        let ctx = egui::Context::default();
+        let buttons = navigator(&mut app, &ctx, vec![]);
+        assert_eq!(buttons.len(), 4);
+        let click = |app: &mut crate::VectorcraftApp, r: egui::Rect| {
+            let b = |pressed| egui::Event::PointerButton {
+                pos: r.center(),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            navigator(app, &ctx, vec![egui::Event::PointerMoved(r.center())]);
+            navigator(app, &ctx, vec![b(true)]);
+            navigator(app, &ctx, vec![b(false)]);
+        };
+        let at = |app: &crate::VectorcraftApp| (app.view().unwrap().artboard, app.view().unwrap().center);
+        click(&mut app, buttons[2]);
+        assert_eq!(at(&app), (1, Point::new(320.0, 50.0)), "next");
+        click(&mut app, buttons[3]);
+        assert_eq!(at(&app), (2, Point::new(540.0, 50.0)), "last");
+        click(&mut app, buttons[1]);
+        assert_eq!(at(&app), (1, Point::new(320.0, 50.0)), "previous");
+        // Fit Artboard in Window and Actual Size show the navigator's artboard.
+        app.run("view.setZoom", json!({"zoom": 300, "center": [0, 0]})).unwrap();
+        app.run("view.fitArtboard", json!({})).unwrap();
+        assert_eq!(at(&app), (1, Point::new(320.0, 50.0)));
+        app.run("view.actualSize", json!({})).unwrap();
+        assert_eq!((at(&app).1, app.view().unwrap().zoom), (Point::new(320.0, 50.0), 1.0));
+        click(&mut app, buttons[0]);
+        assert_eq!(at(&app), (0, Point::new(100.0, 50.0)), "first");
+        // The command also takes an index, clamped to the last artboard.
+        assert_eq!(app.run("view.goToArtboard", json!({"index": 9})), Ok(json!({"index": 2})));
+        assert!(app.run("view.goToArtboard", json!({"index": "sideways"})).is_err());
     }
 
     #[test]

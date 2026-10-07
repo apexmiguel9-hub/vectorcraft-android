@@ -21,7 +21,7 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tip: &str, selected: bool, size: f32
     ui.painter().rect_filled(rect, CornerRadius::same(3), bg);
     let pad = (size * 0.2).round();
     icons::paint(ui, icon, rect.shrink(pad), if selected { t.text } else { t.icon });
-    if !tip.is_empty() { resp.on_hover_text(tip) } else { resp }
+    if !tip.is_empty() { resp.on_hover_text(tl!(tip)) } else { resp }
 }
 
 /// Small flat text button (Quick Actions style).
@@ -40,14 +40,14 @@ pub fn flat_button(ui: &mut Ui, text: &str, width: f32) -> Response {
         Stroke::new(1.0, if resp.hovered() { t.text } else { t.button_border }),
         StrokeKind::Inside,
     );
-    ui.painter().with_clip_rect(rect).text(rect.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(12.5), t.text_strong);
+    ui.painter().with_clip_rect(rect).text(rect.center(), egui::Align2::CENTER_CENTER, tl!(text), egui::FontId::proportional(12.5), t.text_strong);
     resp
 }
 
 /// Blue call-to-action pill (dialog OK/Create).
 pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(text.to_string(), theme::semibold(12.5), Color32::WHITE);
+    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(12.5), Color32::WHITE);
     let w = galley.size().x + 32.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(72.0), 28.0), Sense::click());
     let bg = if resp.hovered() { t.accent } else { t.accent_strong };
@@ -59,7 +59,7 @@ pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
 /// Outlined secondary pill (dialog Cancel).
 pub fn secondary_button(ui: &mut Ui, text: &str) -> Response {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(text.to_string(), theme::semibold(12.5), t.text);
+    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), theme::semibold(12.5), t.text);
     let w = galley.size().x + 32.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w.max(72.0), 28.0), Sense::click());
     if resp.hovered() {
@@ -74,7 +74,7 @@ pub fn secondary_button(ui: &mut Ui, text: &str) -> Response {
 pub fn section_header(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
     ui.add_space(2.0);
-    ui.label(egui::RichText::new(text).size(13.0).color(t.text));
+    ui.label(egui::RichText::new(tl!(text)).size(13.0).color(t.text));
     ui.add_space(2.0);
 }
 
@@ -88,6 +88,12 @@ pub fn divider(ui: &mut Ui) {
 }
 
 pub fn dim_label(ui: &mut Ui, text: &str) -> Response {
+    dim_name(ui, tl!(text))
+}
+
+/// [`dim_label`] for a name that is user or file data (a swatch, style, artboard or font name):
+/// shown as it is, never translated.
+pub fn dim_name(ui: &mut Ui, text: &str) -> Response {
     let t = Tokens::get(ui.ctx());
     ui.label(egui::RichText::new(text).color(t.text).size(12.5))
 }
@@ -193,7 +199,7 @@ pub fn label_row(ui: &mut Ui, label: &str, label_width: f32, add: impl FnOnce(&m
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(label_width, 24.0), Sense::hover());
         let t = Tokens::get(ui.ctx());
-        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(12.5), t.text);
+        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, tl!(label), egui::FontId::proportional(12.5), t.text);
         add(ui);
     });
 }
@@ -395,9 +401,24 @@ pub fn fill_stroke_proxy(ui: &mut Ui, fill: &Paint, stroke: &Paint, mixed: (bool
     }
 }
 
-/// A compact dropdown. Returns the chosen index.
+/// A compact dropdown of interface labels (shown in the UI language). Returns the chosen index.
 pub fn dropdown(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, current: &str, options: &[&str], width: f32) -> Option<usize> {
     dropdown_with(ui, id, current, options, width, |_| true)
+}
+
+/// [`dropdown`] of names that are user, file or system data (font styles, artboards, presets the
+/// user saved, printers, profiles), shown as they are, never translated. For a list that mixes
+/// built-in labels with such names, translate the built-in ones (`tl!`) before passing them.
+pub fn dropdown_names(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, current: &str, options: &[&str], width: f32) -> Option<usize> {
+    combo(ui, id, current, width, false, |ui| {
+        let mut chosen = None;
+        for (i, o) in options.iter().enumerate() {
+            if ui.add(egui::Button::selectable(*o == current, *o)).clicked() {
+                chosen = Some(i);
+            }
+        }
+        chosen
+    })
 }
 
 /// [`dropdown`] whose options can be disabled (`enabled(index)`: greyed and not choosable).
@@ -409,10 +430,10 @@ pub fn dropdown_with(
     width: f32,
     enabled: impl Fn(usize) -> bool,
 ) -> Option<usize> {
-    combo(ui, id, current, width, false, |ui| {
+    combo(ui, id, tl!(current), width, false, |ui| {
         let mut chosen = None;
         for (i, o) in options.iter().enumerate() {
-            if ui.add_enabled(enabled(i), egui::Button::selectable(*o == current, *o)).clicked() {
+            if ui.add_enabled(enabled(i), egui::Button::selectable(*o == current, tl!(o))).clicked() {
                 chosen = Some(i);
             }
         }
@@ -475,7 +496,7 @@ pub fn font_dropdown(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, cu
         }
         let query = search_field(ui, field, "Search").to_lowercase();
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let families = vectorcraft_text::FontDb::global().family_list();
+        let families = vectorcraft_text::FontDb::global().menu_family_list();
         let (mut chosen, mut first) = (None, None);
         // The search field stays put over the list as it scrolls.
         menu_scroll(ui, |ui| {
@@ -533,13 +554,13 @@ pub fn blend_separator_before(i: usize) -> bool {
 /// The blend-mode dropdown, its groups separated (Normal | darken | lighten | contrast | inversion
 /// | component modes). `None` (objects that differ) shows blank. Returns the chosen mode.
 pub fn blend_dropdown(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, current: Option<BlendMode>, width: f32) -> Option<BlendMode> {
-    combo(ui, id, current.map_or("", BlendMode::label), width, false, |ui| {
+    combo(ui, id, current.map_or("", |m| tl!(m.label())), width, false, |ui| {
         let mut chosen = None;
         for (i, m) in BlendMode::ALL.into_iter().enumerate() {
             if blend_separator_before(i) {
                 ui.separator();
             }
-            if ui.selectable_label(Some(m) == current, m.label()).clicked() {
+            if ui.selectable_label(Some(m) == current, tl!(m.label())).clicked() {
                 chosen = Some(m);
             }
         }
@@ -644,7 +665,7 @@ pub fn toggle_icon(ui: &mut Ui, on_icon: &str, on: bool, size: f32, tip: &str) -
     } else if resp.hovered() {
         icons::paint(ui, on_icon, rect.shrink(size * 0.2), t.text_disabled);
     }
-    resp.on_hover_text(tip).clicked()
+    resp.on_hover_text(tl!(tip)).clicked()
 }
 
 // ---------- panel widgets (Swatches, Color, Stroke, Gradient, Appearance, …) ----------
@@ -658,19 +679,19 @@ pub fn icon_button_enabled(ui: &mut Ui, icon: &str, tip: &str, selected: bool, e
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     let pad = (size * 0.2).round();
     icons::paint(ui, icon, rect.shrink(pad), t.text_disabled);
-    if tip.is_empty() { resp } else { resp.on_hover_text(tip) }
+    if tip.is_empty() { resp } else { resp.on_hover_text(tl!(tip)) }
 }
 
 /// Regular-weight panel sub-header ("Shape Modes:", "Align Objects:").
 pub fn subheader(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new(text).size(12.5).color(t.text));
+    ui.label(egui::RichText::new(tl!(text)).size(12.5).color(t.text));
 }
 
 /// A label drawn with a dotted underline (Illustrator's link labels: "Stroke:", "Opacity:").
 pub fn link_label(ui: &mut Ui, text: &str) -> Response {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(text.to_string(), egui::FontId::proportional(12.5), t.text_strong);
+    let galley = ui.painter().layout_no_wrap(tl!(text).to_string(), egui::FontId::proportional(12.5), t.text_strong);
     let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(0.0, 3.0), Sense::click());
     let y = rect.top() + galley.size().y + 1.0;
     ui.painter().galley(rect.min, galley, t.text_strong);
@@ -686,7 +707,8 @@ pub fn link_label(ui: &mut Ui, text: &str) -> Response {
 /// returns the box, the response and the box's border colour.
 fn choice_row(ui: &mut Ui, label: &str, enabled: bool) -> (Rect, Response, Color32) {
     let t = Tokens::get(ui.ctx());
-    let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(12.5), if enabled { t.text } else { t.text_disabled });
+    let galley =
+        ui.painter().layout_no_wrap(tl!(label).to_string(), egui::FontId::proportional(12.5), if enabled { t.text } else { t.text_disabled });
     let (rect, resp) =
         ui.allocate_exact_size(vec2(18.0 + galley.size().x, 20.0f32.max(galley.size().y)), if enabled { Sense::click() } else { Sense::hover() });
     let bx = Rect::from_min_size(pos2(rect.left(), rect.center().y - 6.5), Vec2::splat(13.0));
@@ -1027,7 +1049,7 @@ pub fn search_field(ui: &mut Ui, id: egui::Id, hint: &str) -> String {
                 egui::TextEdit::singleline(&mut query)
                     .id(id.with("edit"))
                     .frame(egui::Frame::NONE)
-                    .hint_text(egui::RichText::new(hint).italics())
+                    .hint_text(egui::RichText::new(tl!(hint)).italics())
                     .desired_width(ui.available_width()),
             );
         });
@@ -1056,6 +1078,11 @@ pub fn bottom_bar(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 
 /// A menu row for panel (≡) menus: label, optional check mark, disabled when not implemented.
 pub fn menu_item(ui: &mut Ui, label: &str, enabled: bool, checked: bool) -> bool {
+    menu_item_name(ui, tl!(label), enabled, checked)
+}
+
+/// [`menu_item`] for a name that is user or file data (a library, a recent URL), never translated.
+pub fn menu_item_name(ui: &mut Ui, label: &str, enabled: bool, checked: bool) -> bool {
     let text = if checked { format!("✓ {label}") } else { format!("   {label}") };
     ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(text).size(12.5)).frame(false)).clicked()
 }
@@ -1113,8 +1140,12 @@ pub enum PanelDrag {
     /// `ids`); the panel moves it to where it is dropped.
     GraphicStyle(String),
     /// The selected art, dragged off the canvas with the Selection tool: the Graphic Styles panel
-    /// makes a style of the first object (`graphicStyle.new`).
+    /// makes a style of the first object (`graphicStyle.new`), the Symbols panel a symbol of it all
+    /// (`symbol.new`).
     Art(Vec<vectorcraft_doc::NodeId>),
+    /// A Symbols panel symbol: the canvas places an instance of it centred where it is dropped
+    /// (`symbol.place`).
+    Symbol(String),
 }
 
 /// The Swatches panel rows a drag from that panel moves: the swatch, None, Registration or colour
@@ -1297,7 +1328,7 @@ pub fn tab_bar(ui: &mut Ui, tabs: &[&str], current: usize) -> Option<usize> {
         for (i, tab) in tabs.iter().enumerate() {
             let sel = i == current;
             let font = if sel { theme::semibold(13.0) } else { egui::FontId::proportional(13.0) };
-            let galley = ui.painter().layout_no_wrap(tab.to_string(), font, t.text);
+            let galley = ui.painter().layout_no_wrap(tl!(tab).to_string(), font, t.text);
             let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x, 30.0), Sense::click());
             let color = if sel || resp.hovered() { t.text_strong } else { t.text_dim };
             ui.painter().galley(pos2(rect.left(), rect.center().y - galley.size().y / 2.0 - 2.0), galley, color);
@@ -1334,7 +1365,7 @@ pub fn orientation_button(ui: &mut Ui, landscape: bool, selected: bool, tip: &st
     ui.painter().add(egui::Shape::convex_polygon(outline.clone(), fill, Stroke::new(1.2, color)));
     let corner = [page.right_top() - vec2(fold, 0.0), page.right_top() + vec2(-fold, fold), page.right_top() + vec2(0.0, fold)];
     ui.painter().add(egui::Shape::line(corner.to_vec(), Stroke::new(1.2, if selected { t.panel } else { color })));
-    resp.on_hover_text(tip).clicked()
+    resp.on_hover_text(tl!(tip)).clicked()
 }
 
 /// `region` of `doc` rendered on white, its longest side `px` pixels, as a texture named `name`

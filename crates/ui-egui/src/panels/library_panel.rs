@@ -113,6 +113,17 @@ pub(crate) fn submenu(category: &str) -> Option<&'static str> {
     }
 }
 
+/// Is library `id` built in? A library the user saved to the User Defined folder or loaded from a
+/// file (`user/…`, `loaded/…` ids) is named by its file.
+fn builtin_library(id: &str) -> bool {
+    !(id.starts_with("user/") || id.starts_with("loaded/"))
+}
+
+/// Library `id`'s name as shown: a built-in library's in the UI language, any other's as it is.
+pub(crate) fn library_name<'a>(id: &str, name: &'a str) -> &'a str {
+    super::label_or_name(name, builtin_library(id))
+}
+
 /// The opener of library `K`'s libraries (`window.swatchLibrary {library}`): open library `library`
 /// (an id or a name; `list`: the command listing them) in the panel, `null` closing it. `found`
 /// looks a library up: its id, name and item count. → {open, name, count}
@@ -174,17 +185,18 @@ fn window<K: LibraryKind>(app: &mut VectorcraftApp, ctx: &egui::Context, id: &st
             ui.set_width(256.0);
             let (strip, _) = ui.allocate_exact_size(vec2(256.0, 26.0), Sense::hover());
             ui.painter().rect_filled(strip, CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 }, t.panel_darker);
-            let label = egui::RichText::new(&name).font(theme::semibold(12.0));
-            let galley = ui.painter().layout_no_wrap(name.clone(), theme::semibold(12.0), t.text);
+            let name = library_name(id, &name);
+            let label = egui::RichText::new(name).font(theme::semibold(12.0));
+            let galley = ui.painter().layout_no_wrap(name.to_string(), theme::semibold(12.0), t.text);
             let tab = Rect::from_min_size(strip.min, vec2((galley.size().x + 24.0).min(190.0), 26.0));
             ui.painter().rect_filled(tab, CornerRadius { nw: 4, ne: 0, sw: 0, se: 0 }, t.panel);
             ui.put(tab.shrink2(vec2(12.0, 0.0)), egui::Label::new(label.color(t.text)).truncate().selectable(false));
             let close = Rect::from_center_size(strip.right_center() - vec2(13.0, 0.0), vec2(14.0, 14.0));
-            let cr = ui.interact(close, ui.id().with("close-library"), Sense::click()).on_hover_text("Close");
+            let cr = ui.interact(close, ui.id().with("close-library"), Sense::click()).on_hover_text(tl!("Close"));
             icons::paint(ui, "x", close, if cr.hovered() { t.text } else { t.text_dim });
             open = !cr.clicked();
             let menu = Rect::from_center_size(strip.right_center() - vec2(34.0, 0.0), vec2(16.0, 16.0));
-            let mr = ui.interact(menu, ui.id().with("library-menu"), Sense::click()).on_hover_text("Panel menu");
+            let mr = ui.interact(menu, ui.id().with("library-menu"), Sense::click()).on_hover_text(tl!("Panel menu"));
             icons::paint(ui, "menu", menu.shrink(1.0), if mr.hovered() { t.text_strong } else { t.text_dim });
             egui::Popup::menu(&mr).show(|ui| {
                 ui.set_min_width(200.0);
@@ -217,7 +229,7 @@ fn body<K: LibraryKind>(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, lib: &K
     let query = if pstate::<bool>(ui.ctx(), &key::<K>("hide-find")) {
         String::new()
     } else {
-        widgets::search_field(ui, egui::Id::new(key::<K>("find")), "Find")
+        widgets::search_field(ui, egui::Id::new(key::<K>("find")), tl!("Find"))
     };
     ui.add_space(4.0);
     let rows = K::rows(lib, &query.trim().to_lowercase());
@@ -234,7 +246,7 @@ fn body<K: LibraryKind>(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, lib: &K
         egui::ScrollArea::vertical().id_salt(key::<K>("scroll")).max_height(max_height).show(ui, |ui| {
             ui.set_width(ui.available_width());
             if rows.is_empty() {
-                widgets::dim_label(ui, if query.trim().is_empty() { "This library is empty." } else { "No matches." });
+                widgets::dim_label(ui, if query.trim().is_empty() { tl!("This library is empty.") } else { tl!("No matches.") });
             } else if view.is_list() {
                 for row in &rows {
                     let (r, resp, chip) = list_row(ui, tile_id::<K>(row.name), view, is_sel(row.name));
@@ -298,7 +310,7 @@ fn bottom<K: LibraryKind>(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
             ui.set_min_width(200.0);
             library_menu::<K>(app, ui);
         });
-        for (icon, tip, step) in [("chevron-left", "Previous Library", -1), ("chevron-right", "Next Library", 1)] {
+        for (icon, tip, step) in [("chevron-left", tl!("Previous Library"), -1), ("chevron-right", tl!("Next Library"), 1)] {
             if widgets::icon_button(ui, icon, tip, false, 24.0).clicked()
                 && let Some(next) = neighbour::<K>(app, id, step)
             {
@@ -327,18 +339,18 @@ fn panel_menu<K: LibraryKind>(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
     }
     ui.separator();
     let hidden: bool = pstate(ui.ctx(), &key::<K>("hide-find"));
-    if menu_item(ui, "Show Find Field", true, !hidden) {
+    if menu_item(ui, tl!("Show Find Field"), true, !hidden) {
         set_pstate(ui.ctx(), &key::<K>("hide-find"), !hidden);
     }
     ui.separator();
-    for (label, step) in [("Previous Library", -1), ("Next Library", 1)] {
+    for (label, step) in [(tl!("Previous Library"), -1), (tl!("Next Library"), 1)] {
         if menu_item(ui, label, true, false)
             && let Some(next) = neighbour::<K>(app, id, step)
         {
             open::<K>(app, &next);
         }
     }
-    if menu_item(ui, "Close Library", true, false) {
+    if menu_item(ui, tl!("Close Library"), true, false) {
         app.ui.library_panel = None;
     }
 }
@@ -359,7 +371,7 @@ pub(crate) fn library_menu<K: LibraryKind>(app: &mut VectorcraftApp, ui: &mut Ui
 pub(crate) fn library_items(ui: &mut Ui, libs: &[LibraryRef], current: Option<&str>) -> Option<String> {
     let mut chosen = None;
     let mut item = |ui: &mut Ui, l: &LibraryRef| {
-        if menu_item(ui, &l.name, true, current == Some(l.id.as_str())) {
+        if widgets::menu_item_name(ui, library_name(&l.id, &l.name), true, current == Some(l.id.as_str())) {
             chosen = Some(l.id.clone());
         }
     };
@@ -373,7 +385,7 @@ pub(crate) fn library_items(ui: &mut Ui, libs: &[LibraryRef], current: Option<&s
         }
     }
     for s in subs {
-        ui.menu_button(s, |ui| {
+        ui.menu_button(tl!(s), |ui| {
             crate::widgets::menu_scroll(ui, |ui| {
                 for l in libs.iter().filter(|l| l.submenu == Some(s)) {
                     item(ui, l);
@@ -598,5 +610,10 @@ mod tests {
         assert_eq!(app.session.documents().len(), 1, "not opened as a document");
         let other = SwatchLibraries::list(&app).into_iter().find(|l| l.id == open.id).unwrap();
         assert_eq!(other.submenu, Some("Other Libraries"));
+        // Built-in libraries' names are interface labels; a file's is shown as it is.
+        for l in SwatchLibraries::list(&app) {
+            assert_eq!(builtin_library(&l.id), !matches!(l.submenu, Some("User Defined" | "Other Libraries")), "{}", l.id);
+        }
+        assert!(!builtin_library(&open.id) && builtin_library(vectorcraft_engine::cmd::swatchlib::DOCUMENT_SWATCHES));
     }
 }

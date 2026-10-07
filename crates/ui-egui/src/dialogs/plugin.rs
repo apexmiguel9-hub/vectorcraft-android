@@ -20,6 +20,10 @@ pub const KIND: &str = "plugin";
 
 const CMD: &str = "plugin.run";
 
+/// Object › Plug-ins' header while no filter plug-in is installed.
+pub const NO_FILTERS: &str = "No filter plug-ins installed";
+
+/// Headed by the plug-in's name, as it is (plug-in text is never translated).
 pub(super) const SPEC: DialogSpec =
     DialogSpec { heading: |d| d.str("__label"), body, confirm, preview: true, max_width: Some(420.0), ..DialogSpec::FORM };
 
@@ -37,7 +41,7 @@ pub fn object_menu() -> Vec<Item> {
         .map(|p| Item::Cmd(label(&p.manifest().name, !p.manifest().params.is_empty()), "plugin.dialog", json!({ "id": p.id() })))
         .collect();
     if items.is_empty() {
-        items.push(Item::Header("No filter plug-ins installed"));
+        items.push(Item::Header(NO_FILTERS));
     }
     items.extend([
         Item::Sep,

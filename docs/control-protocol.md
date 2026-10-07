@@ -3,6 +3,16 @@
 `vectorcraft --control <port>` listens on `127.0.0.1:<port>` (loopback only). One JSON request per line:
 `{"id": 1, "method": "ui.inspect", "params": {}}` → `{"id": 1, "ok": true, "result": {...}}` or `{"id":1,"ok":false,"error":"..."}`.
 
+**Only requests are read.** Every line must be a JSON object with a string `method` (`id` and `params`
+are optional; blank lines are skipped). Anything else gets one error reply
+(`{"ok": false, "error": "… closing the connection"}`) and the server **closes the connection**, so
+nothing sent after it on that connection runs. That covers text that isn't JSON, a JSON array or number,
+an object without `method`, invalid UTF-8, and a line longer than 4 MiB. An HTTP request (for example a
+web page's cross-origin `fetch` to `127.0.0.1:<port>`) therefore can't smuggle a command in its body:
+its request line is rejected first. At most 16 connections are served at once; further ones get an error
+line and are closed. Clients that get an error reply should reconnect. The port has no authentication,
+so only enable it while you use it. Transport: `apps/vectorcraft/src/control_server.rs`.
+
 | Method | Params | |
 |---|---|---|
 | `engine.execute` | `{command, params}` | run any engine or UI command (see `engine.commands`) |
@@ -10,6 +20,7 @@
 | `document.inspect` | | layer tree, selection, history, paint defaults |
 | `ui.inspect` | | tool, UI state, view, canvas rect, window size, perf, background saves and exports still running |
 | `ui.menu.list` / `ui.menu.invoke` | `{command, params}` | the full menu tree / invoke an item |
+| `ui.contextMenu.list` | | the canvas context menu for the current selection, flattened like `ui.menu.list` (`path` holds its submenus). `ui.click {x, y, button: "right"}` on the canvas opens it, after selecting the object there unless it is already selected |
 | `ui.tool.select` / `ui.tool.list` | `{tool}` | |
 | `ui.pointer` | `{events:[{kind: down|drag|up|move|doubleclick, x, y, space?: "doc"|"screen", mods?}]}` | drive the active tool exactly like the mouse |
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | synthetic keyboard input |
@@ -76,7 +87,9 @@ point (`paint.freeform.selectPoint`); its fields are `color` (hex), `opacity` an
 Tool options: double-clicking a tool button runs `tool.options {tool}`. For `gradient` it opens the Gradient panel;
 for `eyedropper` it opens Eyedropper Options, an `eyedropperOptions` dialog (fields `sampleSize` 1/3/5, `pickUp` and
 `apply`, the attribute trees of `eyedropper.setOptions`) whose `ui.dialog.confirm` runs `eyedropper.setOptions` (what
-`appearance.copyFrom` copies). Gradient tool handles snap to
+`appearance.copyFrom` copies). For `hand` it fits the artboard in the window (`view.fitArtboard`) and for `zoom` it
+shows 100% (`view.actualSize`). For `rotate`, `scale`, `reflect` and `shear` it opens the same dialog as Object ›
+Transform (dialog kind = the tool id), or fails with `nothing selected`. Gradient tool handles snap to
 anchors, edges and smart guides; Shift constrains them to 45° steps from the `constrainAngle` preference.
 
 Effect dialogs: `engine.execute {command: "effect.dialog", params: {effect, index?, item?}}` opens the `effect` dialog
@@ -167,6 +180,13 @@ a swatch clicked there runs `paint.setFill` / `paint.setStroke`. Panel keys (Col
 Appearance Shift+F6, Graphic Styles Shift+F5, Stroke Cmd+F10, Gradient Cmd+F9, Transparency Cmd+Shift+F10) run
 `window.panel {panel}` and can be pressed with `ui.key`; `ui.menu.list` shows them on the Window menu's items.
 
+Collapsing the dock: `window.collapseDock {collapsed?}` (the » at the top of the dock; omitted toggles) hides the
+Properties | Layers | Libraries group and puts its three panels as icons at the top of the icon column, under a «
+that expands them again. While collapsed, those icons and `window.panel {panel: "properties"|"layers"|"libraries"}`
+pop the panel out next to the column like the other icon panels (`ui.dock_collapsed`, `ui.open_panel` in
+`ui.inspect`); expanding with one popped out shows its tab. The state is saved with the preferences and in user
+workspaces; the built-in workspaces expand the dock.
+
 Flatten Transparency: `ui.flattenTransparencyDialog` opens the `flattenTransparency` dialog for the selection
 (fields `preset`: a preset name, setting it loads that preset's options; the option keys of
 `object.flattenTransparency`: `balance` 0–100, `lineArtPpi` and `gradientPpi` 1–2400, `textToOutlines`,
@@ -228,6 +248,10 @@ Width Point Edit: double-clicking a width point with the Width tool, or `ui.widt
 `widthPoint` dialog (fields `id`, `index`, `t`, `side1` and `side2`: the left and right widths in points, `linked`,
 `adjustAdjoining`). `ui.dialog.confirm` runs `stroke.widthPoint.set` with them; `ui.dialog.set {field: "discard",
 value: true}` then confirm (the Delete button) removes the point with `stroke.widthPoint.remove`.
+
+Perspective plane options: double-clicking a plane widget of the perspective grid, or `ui.perspectivePlane {plane}`,
+opens the `perspectivePlane` dialog (fields `plane`: left, right or ground; `location`: points along the plane's
+normal; `objects`: none, move or copy). `ui.dialog.confirm` runs `perspective.plane.move` with them.
 
 Units: dialog distance fields (Move's `dx`/`dy`, shape sizes, Offset Path's `offset`, Split Into Grid's `gutter`,
 Artboard Options' sizes, effects' distances, `transformEach`'s `moveH`/`moveV`, New Document's `width`/`height`, the
@@ -437,6 +461,18 @@ agent can call directly. Mirror & Cut's tool options (`tool.setOption`, shown in
 (`free` | `vertical` | `horizontal`; a constrained axis follows the pointer and a click places it) and `keep`
 (`left` | `right` | `top` | `bottom`); Alt on release keeps the other side.
 
+Puppet Warp (`puppetWarp`): with art selected, the tool shows pins at once (automatic ones at the centre and the end
+of each limb until pins are placed). `ui.pointer` clicks on the art add pins (each new pin is selected; Shift-click
+adds a pin to the selection or takes it out), dragging a pin moves every selected pin and warps the art, and
+Alt-dragging near (not on) a selected pin turns the art around it. A click off the mesh adds nothing: the cursor shows
+not-allowed there and the canvas says so. `ui.key` Delete or Backspace removes the selected pins. Adding, deleting and
+each drag are one undo step each, running `object.puppetWarp {rest: true, …}`; the pins live in the document, so
+Undo/Redo take them back with the art, they stay across tool switches while the selection is unchanged, and another
+selection starts afresh. `object.puppetWarp.pins` reads them. Its tool options (`tool.setOption`, shown in the
+Control bar) are `expand` (Expand Mesh, points, 0 allowed), `showMesh` (on by default) and `selectAllPins` (`true`
+selects every pin, `false` none); `ui.inspect` → `toolOptions` lists the `pins` the tool last showed and the
+`selected` ones.
+
 Colour adjustment effects (Effect → Color Adjustments) open the `effect` dialog like the other effects
 (`effect.dialog {effect: "adjust.hueSaturation"}`): its fields are the effect's parameters (sliders for the amounts,
 `channel` for Curves and Levels, `points` for Curves, `color` for Shift to Color) and they preview live; set them with
@@ -465,3 +501,54 @@ Mesh… open `envelopeMesh` (`rows`, `cols`, `reset`, and `maintainShape` when r
 `distortLinearGradients`, `distortPatternFills`) with the selected envelope's values, or with nothing selected the
 defaults for new envelopes. They preview live while an envelope is involved, and `ui.dialog.confirm` keeps the result
 as one undo step.
+
+Liquify Tool Options: double-clicking a Liquify tool (`tool.options {tool: "twirl"}`) opens a `liquifyOptions` dialog.
+Its fields are `tool`, the Global Brush Dimensions `width`, `height` (pt), `angle`, `intensity` (%) and `usePressure`,
+then the tool's options `detail`, `simplify` and `simplifyOn` (Warp, Twirl, Pucker, Bloat), `rate` (Twirl),
+`complexity`, `affectAnchors`, `affectIn` and `affectOut` (Scallop, Crystallize, Wrinkle), `horizontal` and
+`vertical` (Wrinkle, %), and `showBrush`. `ui.dialog.confirm` runs `tool.setOption {tool, values}`. `ui.pointer`
+events take `pressure` (0..1, default 1): it is the Liquify intensity while Use Pressure Pen is on.
+
+`ui.pointer` events also take `holdMs` (0..60000): the pointer then holds still that long, button down, before the
+next event. Twirl, Pucker and Bloat keep applying while held (a repeat of the last point every 0.1 s), exactly as
+for the same time held with the mouse. Liquify leaves type, symbols, images, graphs, meshes, envelopes, repeats and
+blends as they are and says so in the status bar.
+
+Perspective grid presets: in the `perspectiveGrid` dialog, `name` is the preset whose fields are loaded (setting the
+fields of a preset, as the Preset menu does, keeps its name; other changes clear it, which reads [Custom]). Save
+Preset… sets `__mode: "save"` and `__from: "define"` with `name` the new preset's name: `ui.dialog.confirm` then saves
+the fields as that preset (`perspective.presets.save`) and returns to Define Grid on it. View → Perspective Grid →
+Save Grid as Preset… (`ui.savePerspectivePreset`) opens the same dialog in `save` mode; OK saves and closes. Edit →
+Perspective Grid Presets… (`ui.perspectivePresetsDialog {selected?}`) opens dialog `perspectiveGridPresets` (field
+`selected`): New… and Edit… open the preset editor (`perspectiveGrid` with `__mode: "edit"`, `__original` the preset
+edited), whose OK runs `perspective.presets.save` and comes back; Delete, Import… and Export… are
+`perspective.presets.delete`, `import` and `export`. View → Perspective Grid → One/Two/Three Point Perspective list
+that type's built-in views and the saved presets (`ui.perspectiveUserPreset<type>.<n>`, hidden while empty). Opening a
+`.vcperspective` file with `app.open` imports its presets.
+
+Blend Options (Object › Blend › Blend Options…, `ui.blendOptions`, the Blend tool's double-click, Alt-click and
+toolbar button) opens the `blendOptions` dialog on the selected blend's options: `spacing` (`smooth` | `steps` |
+`distance`), `steps`, `distance` (pt), `orientation` (`page` | `path`) and `preview`; it previews live and
+`ui.dialog.confirm` keeps the change as one undo step. With no blend selected (`__target: "defaults"`) OK sets what
+new blends start with. The Blend tool (`ui.tool.select {tool: "blend"}`): `ui.pointer` down on an object, then on
+another, blends them; down on an anchor point blends from that point; each further object clicked joins the blend.
+A selected blend shows its spine. With Direct Selection (`directSelection`) a `ui.pointer` drag from a spine point
+moves it (`object.blend.spine.moveAnchor`, one undo step) and, once a point is clicked, from one of its handles
+reshapes the curve; Direct and Group Selection pick a blend's key objects. With the Pen tool a click on a selected
+blend's spine adds a point (on a point no key sits on, deletes it).
+
+Perspective grid view options: View → Perspective Grid lists Show/Hide Grid, Show/Hide Rulers, Snap to Grid
+(checked), Lock/Unlock Grid and Lock Station Point (checked); `ui.menu.list` reports the current labels. They run
+`perspective.grid.show`, `rulers`, `snap`, `lock` and `lockStation`.
+
+Perspective grid widgets: the Plane Switching Widget is fixed in a corner of the canvas (`ui.pointer` with
+`space: "screen"` reaches it at the same pixels whatever the zoom); a press on it with any tool picks the plane while
+the grid shows. `ui.key` with `key` `"1"`…`"4"` picks the left, horizontal, right or no plane. Double-clicking the
+Perspective Grid tool (`tool.options {tool: "perspectiveGrid"}`) opens `perspectiveGridOptions` (fields `show`,
+`position`: `topLeft`, `topRight`, `bottomLeft`, `bottomRight`); `ui.dialog.confirm` runs `perspective.widget.options`.
+
+Envelopes on the canvas: `pointer_gesture` with the Mesh tool (`mesh`) or Direct Selection on a selected mesh envelope
+drags its points (a press on a point focuses it, and a press on one of the focused point's handle ends drags that
+handle); a Mesh tool click inside a mesh envelope adds a row and a column. While an envelope or its content is
+selected the Control bar shows its controls (Edit Envelope / Edit Contents, warp style, orientation, bend and
+distortions or mesh rows and columns, Reset, Envelope Options); each runs an `object.envelope.*` command.

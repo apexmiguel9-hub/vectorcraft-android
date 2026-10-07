@@ -2,7 +2,7 @@
 //! [`Backend`].
 
 use serde_json::{Map, Value, json};
-use vectorcraft_engine::cmd::fileio::{ARTBOARD_PARAMS, FORMATS, OPEN_EXTS};
+use vectorcraft_engine::cmd::fileio::{ARTBOARD_PARAMS, FORMATS, OPEN_EXTS, SAVE_FORMATS, format};
 
 use crate::backend::Backend;
 
@@ -57,6 +57,12 @@ fn obj(props: Value, required: &[&str]) -> Value {
     }
     o
 }
+
+/// The extension of each format Save writes, in [`SAVE_FORMATS`] order.
+fn save_extensions() -> Vec<&'static str> {
+    SAVE_FORMATS.iter().filter_map(|id| format(id)?.extensions.first().copied()).collect()
+}
+
 fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool) -> Value {
     json!({
         "name": name,
@@ -127,6 +133,8 @@ pub fn tool_definitions() -> Vec<Value> {
                             "x": num("Document x (pt)"),
                             "y": num("Document y (pt)"),
                             "mods": mods_schema(),
+                            "pressure": num("Pen pressure 0..1 (default 1): the Liquify tools' intensity with Use Pressure Pen on"),
+                            "holdMs": num("Milliseconds the pointer then holds still, button down (0..60000): Twirl, Pucker and Bloat keep applying"),
                         }), &["kind", "x", "y"]),
                     },
                     "mods": mods_schema(),
@@ -257,14 +265,17 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "save_file",
             "Save file",
-            "Save the active document in the native .vectorcraft format.",
-            obj(json!({"path": string("Destination (default: the document's current path)")}), &[]),
+            &format!(
+                "Save the active document with the engine's document.save: by default to its own file in its own format (native .vectorcraft unless it was opened from or saved as SVG, PDF or a restorable .ai). With `path`, the extension picks the format: .{}. Other formats are exports (see export). The reply's `format` says what was written and `warnings` what that format loses.",
+                save_extensions().join(", .")
+            ),
+            obj(json!({"path": string("Destination; its extension picks the format (default: the document's own file)")}), &[]),
             false,
         ),
         tool(
             "export",
             "Export",
-            "Export the active document with the engine's document.export (the same bytes in the app and headless): svg (artboard viewBox), pdf (one page per artboard: all, or `artboard` / `range`), png/jpg/webp/gif/png8/tiff/bmp/tga/psd (one rendered artboard; png8 is an indexed .png; psd keeps the layers), txt (the stories, back to front) or vectorcraft (a native copy; the document keeps its path). `selection: true` exports only the selected objects, cropped to their bounds. Template layers are left out; live effects are kept (geometry baked, SVG filters for shadows/glows/blur). Without `path` the bytes come back as dataBase64.",
+            "Export the active document with the engine's document.export (the same bytes in the app and headless), in any format of the `format` enum: vectors (svg/svgz with the artboard as viewBox, eps, dxf, emf, wmf), pdf (one page per artboard: all, or `artboard` / `range`), rasters (one rendered artboard: png, jpg, webp, gif, png8 as an indexed .png, tiff, bmp, tga, psd with its layers), txt (the stories, back to front), vectorcraft or template (a native copy or template; the document keeps its path). run_command document.formats lists each format's options. `selection: true` exports only the selected objects, cropped to their bounds. Template layers are left out; live effects are kept (geometry baked, SVG filters for shadows/glows/blur). Without `path` the bytes come back as dataBase64.",
             obj(
                 json!({
                     "format": {"type": "string", "enum": FORMATS.iter().filter(|f| f.write).map(|f| f.id).collect::<Vec<_>>(), "description": "Default: from the path's extension"},

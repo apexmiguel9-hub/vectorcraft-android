@@ -168,6 +168,33 @@ fn export_selection_crops_to_the_selection() {
     assert_eq!(text.matches("<path").count(), 1, "{text}");
 }
 
+/// A selection export reports the encoder's warnings like a whole-document export, and an empty
+/// list when nothing was approximated.
+#[test]
+fn export_selection_reports_the_encoders_warnings() {
+    let mut s = session();
+    s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 50, "height": 50})).unwrap();
+    s.execute("transparency.set", &json!({"blend": "Multiply"})).unwrap();
+    let warnings = |v: &serde_json::Value| v["warnings"].as_array().cloned().unwrap_or_else(|| panic!("no warnings key: {v}"));
+    // Control: nothing approximated.
+    let plain = s.execute("document.exportSelection", &json!({"format": "svg"})).unwrap();
+    assert_eq!(plain["format"], "svg");
+    assert!(warnings(&plain).is_empty(), "{plain}");
+    for (format, options, says) in [
+        ("webp", json!({"lossless": false}), "lossless"),
+        ("svg", json!({"profile": "tiny12"}), "blend"),
+        ("pdf", json!({"createLayers": true, "compatibility": "1.4"}), "layers"),
+    ] {
+        let mut p = options.clone();
+        p["format"] = json!(format);
+        let sel = s.execute("document.exportSelection", &p).unwrap();
+        let doc = s.execute("document.export", &p).unwrap();
+        let w = warnings(&sel);
+        assert!(w.iter().any(|w| w.as_str().unwrap_or("").to_lowercase().contains(says)), "{format}: {sel}");
+        assert_eq!(w, warnings(&doc), "{format}: the same warnings as a whole-document export");
+    }
+}
+
 #[test]
 fn template_opens_as_untitled() {
     let mut s = session();
@@ -204,5 +231,32 @@ fn raster_export_too_large_is_an_error_not_a_crash() {
     let path = dir.join("ok.png");
     s.execute("document.export", &json!({"path": path.to_string_lossy(), "scale": 0.25})).unwrap();
     assert!(std::fs::read(&path).unwrap().starts_with(b"\x89PNG"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Japanese file and folder names save, open, export and title documents as typed: the native
+/// format, SVG, PNG and PDF, in a folder with a Japanese name too.
+#[test]
+fn japanese_file_names_save_open_and_export() {
+    let mut s = session();
+    s.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 80, "height": 40})).unwrap();
+    s.execute("text.create", &json!({"x": 10, "y": 80, "text": "日本語のテキスト"})).unwrap();
+    let dir = std::env::temp_dir().join(format!("vc-日本語フォルダ-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("運動会カード（最終版）・2024.vectorcraft");
+    s.execute("document.save", &json!({"path": path.to_string_lossy()})).unwrap();
+    assert!(path.exists());
+    assert_eq!(s.doc().unwrap().title(), "運動会カード（最終版）・2024.vectorcraft", "the tab names the file as typed");
+    s.execute("document.open", &json!({"path": path.to_string_lossy()})).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(d.path.as_deref(), Some(path.to_string_lossy().as_ref()));
+    let mut found = false;
+    d.doc.walk(|n| found |= matches!(&n.kind, vectorcraft_doc::NodeKind::Text(t) if t.plain_text() == "日本語のテキスト"));
+    assert!(found, "the Japanese text comes back");
+    for (format, name) in [("svg", "書き出し.svg"), ("png", "書き出し.png"), ("pdf", "書き出し.pdf")] {
+        let out = dir.join(name);
+        s.execute("document.export", &json!({"format": format, "path": out.to_string_lossy()})).unwrap();
+        assert!(std::fs::metadata(&out).is_ok_and(|m| m.len() > 0), "{name}");
+    }
     let _ = std::fs::remove_dir_all(dir);
 }
