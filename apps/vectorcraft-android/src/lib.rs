@@ -72,12 +72,32 @@
 //! confirma la pausa, y ese hilo es el que corre el update de egui. La traza entera
 //! esta en el modulo [`browser`].
 //!
-//! ## Insets
+//! ## Insets: por que se recorta `screen_rect` y no se rellenan los de egui
 //!
-//! `egui::InputState::safe_area_insets()` cubre status bar, barra de navegacion y
-//! notch en las plataformas donde winit lo implementa. Ojo: en `winit` v0.30 esa
-//! ruta solo esta implementada para iOS; en Android hay que reservarlo a mano (el
-//! ejemplo de egui reserva 32 puntos arriba con un `Panel::top`).
+//! MEDIDO en el movil, y es lo que mas ha costado entender:
+//!
+//! * `winit` 0.30 rellena `safe_area_insets` **solo en iOS** —en
+//!   `platform_impl/android/` no hay nada—, asi que en Android hay que leerlos de Java.
+//!   Ver [`permiso::insets`].
+//! * La ventana llega **edge-to-edge**: el viewport medido es de 2400 x 1080 enteros, o
+//!   sea que el framework **no** ha reservado las barras. Y desde Android 15 con
+//!   `targetSdk 35+` eso es obligatorio y `setDecorFitsSystemWindows` deja de hacer nada,
+//!   que es justo por lo que Material 3 obliga a reservar el espacio a mano.
+//! * MEDIDO por pixel, con los insets de egui puestos y correctos
+//!   (`insets: l=0 t=24.205128 r=48 b=0`), los paneles **no se movian**:
+//!
+//!       y=  3 px =  1.23 pt   rgb=(83,83,83)     ← el panel empieza en y=0
+//!       y= 47 px = 19.28 pt   rgb=(209,209,209)  ← el texto del menu
+//!       inset esperado arriba: 24.205 pt = 59 px
+//!
+//!   El motivo, en el codigo de egui: `content_rect()` = `viewport_rect - safe_area_insets`
+//!   (`input_state/mod.rs:511`) y eso lo usan los **`Window`** —por eso el titulo de un
+//!   dialogo si se corrigio—, mientras que los paneles se colocan en `available_rect()`,
+//!   que sale de **`screen_rect`**, y ahi los insets no intervienen.
+//!
+//! Por eso aqui lo que se recorta es `screen_rect`, que es la rect de la que salen los
+//! paneles, y `safe_area_insets` se deja **sin rellenar** a proposito: si se rellenara,
+//! los `Window` lo restarian una segunda vez.
 
 use vectorcraft_engine::Session;
 use vectorcraft_ui_egui::VectorcraftApp;
@@ -121,20 +141,40 @@ impl eframe::App for App {
         // 59 px arriba = 24,2 pt; navigationBars 117 px a la derecha = 48,0 pt;
         // displayCutout 115 px a la izquierda = 47,2 pt.
         #[cfg(target_os = "android")]
+        if let [l, t, r, b] = permiso::insets()
+            && (l > 0.0 || t > 0.0 || r > 0.0 || b > 0.0)
+            && let Some(pantalla) = raw.screen_rect
         {
-            let [l, t, r, b] = permiso::insets();
-            if l > 0.0 || t > 0.0 || r > 0.0 || b > 0.0 {
-                // MEDIDO, y copiado de la receta de `egui-winit` para iOS
-                // (`egui-winit-0.36.2/src/safe_area.rs`), que es el unico sitio del grafo
-                // que ya construia esto: `SafeAreaInsets` es un **newtype** de
-                // `epaint::MarginF32`, se reexporta en la raiz de `egui`, y se construye
-                // con el punto y no con llaves.
-                //
-                // MEDIDO que la ruta NO es `egui::input::SafeAreaInsets`: el modulo `input`
-                // es privado y el tipo sale por `egui::SafeAreaInsets`
-                // (`egui/src/context.rs:22`).
-                raw.safe_area_insets = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 { left: l, top: t, right: r, bottom: b }));
-            }
+            // MEDIDO, y esto es lo que hay que hacer y lo que no se puede ver leyendo el
+            // nombre de la API: **recortar `screen_rect`, no rellenar `safe_area_insets`**.
+            //
+            // MEDIDO, por pixel, con `safe_area_insets` puesto y correcto:
+            //
+            //     y=  3 px =  1.23 pt   rgb=(83,83,83)     ← el panel empieza en y=0
+            //     y= 47 px = 19.28 pt   rgb=(209,209,209)  ← el texto del menu
+            //     inset esperado arriba: 24.205 pt = 59 px
+            //
+            // O sea: los insets llegaban bien (`insets: l=0 t=24.205128 r=48 b=0`) y los
+            // paneles **no se movian**. El motivo, en el codigo de egui:
+            //
+            // * `content_rect()` = `viewport_rect - safe_area_insets` (`input_state/mod.rs:511`)
+            //   y eso lo usan los **`Window`** —por eso el titulo del dialogo si se corrigio—.
+            // * los paneles se colocan en `available_rect()`, que sale de **`screen_rect`**.
+            //   `safe_area_insets` no interviene.
+            //
+            // MEDIDO que esta es tambien la via de Android, no un rodeo: la ventana llega
+            // **edge-to-edge** —el viewport medido es 2400 x 1080 enteros, o sea que el
+            // framework **no** ha reservado las barras— y desde Android 15 con
+            // `targetSdk 35+` eso es obligatorio y `setDecorFitsSystemWindows` deja de hacer
+            // nada. Por eso Material 3 obliga a reservar el espacio a mano: es lo unico que
+            // aguanta. Aqui lo que se reserva es el viewport de egui.
+            //
+            // MEDIDO tambien que **no** se rellena `safe_area_insets`: si se hiciera, los
+            // `Window` lo restarian una segunda vez y quedarian con doble margen.
+            raw.screen_rect = Some(egui::Rect::from_min_max(
+                pantalla.min + egui::vec2(l, t),
+                pantalla.max - egui::vec2(r, b),
+            ));
         }
     }
 
