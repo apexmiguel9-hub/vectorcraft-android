@@ -108,11 +108,23 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
-        // MEDIDO: el aviso de permiso se pinta encima del todo de la UI del editor, que
-        // es donde el usuario mira. Solo sale si falta el permiso y el usuario no ha
-        // dicho que no, porque **se puede saltar sin romper nada**.
+        // MEDIDO: el aviso va en una `Window` propia y **no** en el `Ui` del editor.
+        //
+        // Dibujado en el `Ui` salia pegado a la barra de estado, encima del texto de
+        // ayuda, y se leia todo junto:
+        //
+        //     Click thumbnail to select · Ctrl/Cmd-click to switch multiple objects ·
+        //     Alt+… Permitir  ⎌ Ahora no  :ate
+        //
+        // MEDIDO tambien el desplazamiento: los 24 pt de la barra de estado se reservan a
+        // mano porque winit 0.30 solo rellena `safe_area_insets` en iOS.
         #[cfg(target_os = "android")]
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| browser::aviso(ui));
+        egui::Window::new("permiso de almacenamiento")
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, 44.0))
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(false)
+            .show(ui.ctx(), browser::aviso);
     }
 }
 

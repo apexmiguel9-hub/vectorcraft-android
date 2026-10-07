@@ -160,6 +160,14 @@ fn pick_path(app: &mut VectorcraftApp, pick: &FilePick) -> Result<String, String
     if is_web(app) {
         return Ok(pick.name.clone());
     }
+    // A host whose save panel is a widget of its own (Android, and any immediate-mode
+    // host) opens the destination dialog and gets the answer in `write`, so the path
+    // here is the suggested name. The host maps it to the chosen path, which also makes
+    // the next Save of the same document write straight through.
+    if let Some(f) = app.services.save_async.as_mut() {
+        f(pick);
+        return Ok(with_extension(&pick.name, &fileio::extension(&pick.name), |_| true));
+    }
     let picked = app.services.pick_save.as_mut().and_then(|f| f(pick)).ok_or("cancelled")?;
     Ok(with_extension(&picked, &fileio::extension(&pick.name), |_| true))
 }

@@ -106,6 +106,9 @@ static FRAMES: AtomicU32 = AtomicU32::new(0);
 /// solapa con el primer frame visible.
 const ESPERA_ANTES_DE_PREGUNTAR: u32 = 90;
 
+/// Frames entre relecturas del permiso mientras siga faltando. A 60 Hz, uno por segundo.
+const RELECTURA: u32 = 60;
+
 /// Frames de gracia tras volver de Ajustes.
 ///
 /// MEDIDO el numero de frames, no de segundos, porque son lo que se puede medir sin
@@ -354,8 +357,22 @@ pub fn cada_frame() {
         }
         return;
     }
+    // MEDIDO, y era un fallo visible: la cache se quedaba en `false` para siempre. Al
+    // conceder el permiso, el log decia
+    //
+    //     permiso: se deja de mirar; concedido = false
+    //
+    // con el appop ya en `allow`. La razon es que solo se releia mientras se esperaba, y
+    // al dejar de mirar se quedaba con el valor viejo **y el aviso no se iba nunca**.
+    //
+    // Asi que ahora se relee cada `RELECTURA` frames mientras falte el permiso. Una
+    // llamada JNI por segundo no es nada, y es lo que hace que el aviso desaparezca solo
+    // en cuanto el usuario vuelve de Ajustes.
     let quedan = MIRANDO.load(Ordering::Acquire);
     if quedan == 0 {
+        if !CONCEDIDO.load(Ordering::Acquire) && FRAMES.load(Ordering::Relaxed) % RELECTURA == 0 {
+            leer();
+        }
         return;
     }
     leer();

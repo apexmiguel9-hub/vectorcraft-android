@@ -84,7 +84,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use egui_file::{FileDialog, State};
 use vectorcraft_engine::cmd::fileio;
 use vectorcraft_ui_egui::place::PlaceArrival;
-use vectorcraft_ui_egui::Services;
+use vectorcraft_ui_egui::{FilePick, Services};
 
 use crate::permiso;
 
@@ -112,12 +112,39 @@ enum Para {
     Abrir,
     /// `File → Place…`: los bytes van a `place_inbox` y la app los coloca.
     Poner,
+    /// Guardar o exportar: el nombre propuesto se resuelve en la ruta elegida.
+    Guardar,
 }
+
+/// Los bytes de una escritura esperando a que el usuario elija destino.
+///
+/// MEDIDO que hace falta un estado aparte, y por que el mapa de rutas no basta: `save`
+/// pide la ruta y escribe **en la misma llamada** (`io.rs:251-263`), asi que cuando
+/// `write` llega el dialogo sigue abierto —el usuario todavia no ha elegido— y lo unico
+/// que se puede hacer es guardar los bytes y devolver `Ok(())`. Sin esto, guardar
+/// escribiria en un fichero llamado `Untitled.png` en la raiz, que es el fallo que se veia.
+static PENDIENTE: Mutex<Option<(String, Vec<u8>)>> = Mutex::new(None);
+
+/// El nombre propuesto -> la ruta que el usuario eligio.
+///
+/// MEDIDO que hace falta para que el **segundo** guardado no vuelva a preguntar: el
+/// documento guarda como `path` el nombre propuesto —es lo que devuelve `pick_path`
+/// mientras el dialogo esta abierto— asi que sin este mapa, `Save` (no `Save As`) no
+/// tendria donde escribir.
+///
+/// No se persiste a proposito, y se explica: en Android no se restauran los documentos
+/// abiertos al arrancar, asi que `document.path` vuelve a ser `None` y siempre se pasa
+/// por `Save As`. Un mapa en disco solo anadiria un fichero que nadie leeria.
+static RUTAS: LazyLock<Mutex<std::collections::HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// El dialogo abierto y a donde va lo que salga.
 struct Estado {
     dialogo: FileDialog,
     para: Para,
+    /// El `FilePick` de la peticion, para `Guardar`: el nombre propuesto es la clave del
+    /// mapa de rutas y el titulo del dialogo.
+    pick: Option<FilePick>,
 }
 
 // MEDIDO: estado por hilo y no un `static`, y el motivo concreto.
@@ -160,10 +187,32 @@ pub fn logic(ctx: &egui::Context) {
                     elegidas.push(p.to_path_buf());
                 }
                 let para = estado.para;
+                let nombre = estado.pick.as_ref().map(|p| p.name.clone());
                 *caja = None;
-                resolver(para, elegidas);
+                if para == Para::Guardar {
+                    // MEDIDO: en un dialogo de guardar `selection()` viene vacia y el
+                    // nombre va en el campo de texto, asi que el camino de aqui es el de
+                    // `path()`: la ruta completa. Ver `destino_elegido`.
+                    match (elegidas.first(), nombre) {
+                        (Some(ruta), Some(nombre)) => destino_elegido(&nombre, ruta),
+                        _ => log::info!("browser: guardado cancelado o sin nombre"),
+                    }
+                } else {
+                    resolver(para, elegidas);
+                }
             }
-            State::Cancelled | State::Closed => *caja = None,
+            State::Cancelled | State::Closed => {
+                // MEDIDO: si se cancela, los bytes se tiran. Si se dejaran, el siguiente
+                // guardado escribiria el fichero anterior donde el usuario acaba de decir
+                // que no.
+                if estado.pick.is_some()
+                    && let Ok(mut p) = PENDIENTE.lock()
+                {
+                    p.take();
+                    log::info!("browser: destino cancelado; se descartan los bytes en espera");
+                }
+                *caja = None;
+            }
             // `Open`: sigue abierto.
             State::Open => {}
         }
@@ -191,7 +240,50 @@ fn resolver(para: Para, elegidas: Vec<PathBuf>) {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .push(PlaceArrival { name: nombre, bytes, drop: None }),
+            // MEDIDO: `Para::Guardar` no llega aqui. `resolver` es para ficheros **de
+            // entrada**, y guardar no lee: su camino esta en `destino_elegido`, porque
+            // la ruta la decide el dialogo y no el fichero.
+            Para::Guardar => {}
         }
+    }
+}
+
+/// Guardar/exportar: destino elegido.
+///
+/// MEDIDO la API del crate, que es lo que hace esto posible:
+///
+/// ```text
+/// lib.rs:775  let path = self.path.join(filename);   // el nombre del campo de fichero
+/// lib.rs:870  Command::Open(path) => self.select(Some(path));
+/// lib.rs:430  pub fn path(&self) -> &Path { selected_file.path() }
+/// ```
+///
+/// O sea: al guardar, `path()` es la **ruta completa**, no el directorio. Y
+/// `selection()` solo devuelve ficheros marcados del listado, asi que en un dialogo de
+/// guardar viene vacia y por eso `logic` cae a `path()`.
+///
+/// Y `default_filename` se **consume** al construir el dialogo (`lib.rs:243`), asi que el
+/// nombre propuesto hay que guardarlo aparte —de ahi el `pick` en [`Estado`].
+fn destino_elegido(nombre: &str, ruta: &std::path::Path) {
+    RUTAS.lock().unwrap_or_else(|e| e.into_inner()).insert(nombre.to_string(), ruta.to_string_lossy().into_owned());
+    let esperando = PENDIENTE.lock().unwrap_or_else(|e| e.into_inner()).take();
+    match esperando {
+        Some((clave, bytes)) => {
+            // MEDIDO: se escribe aqui y no antes, que es justo lo que pedia el
+            // `PENDIENTE`. Y si el mapa tiene otra clave —el usuario guardo otra cosa
+            // mientras— se avisa en vez de escribir donde no es.
+            if clave != nombre {
+                log::warn!("browser: los bytes en espera son de {clave}, no de {nombre}; no se escriben");
+                return;
+            }
+            match std::fs::write(ruta, &bytes) {
+                Ok(()) => log::info!("browser: guardado {} ({} bytes)", ruta.display(), bytes.len()),
+                Err(e) => log::error!("browser: no se pudo escribir {}: {e}", ruta.display()),
+            }
+        }
+        // MEDIDO: sin bytes esperando significa que la escritura ya habia salido por el
+        // mapa —un segundo `Save`—. No es un fallo.
+        None => log::info!("browser: destino elegido {}", ruta.display()),
     }
 }
 
@@ -227,6 +319,16 @@ fn poner() {
 /// MEDIDO tambien que `initial_path` se consume al construirse, asi que el directorio de
 /// arranque se decide aqui y no en el primer `show`.
 fn mostrar(para: Para, nuevo: fn() -> FileDialog, filtros: Filtros, multi: bool) {
+    mostrar_con(para, nuevo, filtros, multi, None)
+}
+
+/// Igual que [`mostrar`], y ademas con la peticion a la que va a servir.
+///
+/// MEDIDO que hace falta la peticion y no solo el dialogo: el `FilePick` trae el nombre
+/// propuesto, y ese nombre es la **clave** del mapa de rutas de [`destino_elegido`] y lo
+/// que cierra [`PENDIENTE`]. Sin el, al confirmar solo habria una ruta y ninguna idea de
+/// a que nombre pertenece.
+fn mostrar_con(para: Para, nuevo: fn() -> FileDialog, filtros: Filtros, multi: bool, pick: Option<FilePick>) {
     if ESTADO.with(|c| c.borrow().is_some()) {
         // Ya hay un modal abierto. Sustituirlo perderia lo elegido hasta ahora, asi que
         // la peticion se ignora, que es lo que hace un modal de verdad.
@@ -264,6 +366,11 @@ fn mostrar(para: Para, nuevo: fn() -> FileDialog, filtros: Filtros, multi: bool)
     //
     // Y el dialogo tiene campo de path, asi que se puede escribir cualquiera. El
     // unico sitio al que hay que ir con cuidado es este.
+    // MEDIDO: `default_filename` se consume al construir (`egui_file/src/lib.rs:243`),
+    // asi que el nombre propuesto se le pasa aqui y no en `resolver`.
+    if let Some(p) = &pick {
+        dialogo = dialogo.default_filename(p.name.clone());
+    }
     dialogo = dialogo.initial_path(PathBuf::from("/storage/emulated/0"));
     // MEDIDO, y lo dice el propio error de compilacion:
     //     expected `FileDialog`, found `()`
@@ -271,38 +378,82 @@ fn mostrar(para: Para, nuevo: fn() -> FileDialog, filtros: Filtros, multi: bool)
     // O sea que `open()` es `fn open(&mut self)`, no un constructor de cadena. Encadenar
     // `.open()` al final devolvia `()` y no el dialogo.
     dialogo.open();
-    ESTADO.with(|c| *c.borrow_mut() = Some(Estado { dialogo, para }));
+    ESTADO.with(|c| *c.borrow_mut() = Some(Estado { dialogo, para, pick }));
+}
+
+
+/// `save_async`: abrir el dialogo de destino.
+///
+/// MEDIDO que `pick_path` (`io.rs:167`) devuelve el **nombre propuesto** mientras este
+/// dialogo esta abierto, y que despues `write` llega con esos mismos bytes. De ahi el
+/// par `PENDIENTE` mas abajo: es el unico sitio donde se pueden guardar.
+///
+/// El motivo de que esto sea un gancho y no `pick_save` es que `pick_save` es
+/// **sincrono** (`FnMut(&FilePick) -> Option<String>`) y un dialogo en immediate mode no
+/// puede devolver una ruta en la misma llamada en la que el usuario la elige.
+fn guardar(pick: &FilePick) {
+    // Un `FilePick` de guardar trae un filtro por formato; el dialogo lo usa para el
+    // nombre y para avisar si el usuario escribe otra extension.
+    let filtros: Filtros =
+        pick.filters.iter().map(|(etiqueta, exts)| (*etiqueta, *exts)).collect();
+    mostrar_con(Para::Guardar, || FileDialog::save_file(), filtros, false, Some(pick.clone()));
 }
 
 /// Los `Services` del port: el browser y `std::fs`.
 ///
-/// MEDIDO que `read`/`write` son exactamente el seam (`lib.rs:134,135`): `Fn(&str) ->
-/// Result<Vec<u8>, String>` y `FnMut(&str, &[u8]) -> Result<(), String>`.
+/// MEDIDO que `read`/`write` son exactamente el seam (`crates/ui-egui/src/lib.rs:134,135`):
+/// `Fn(&str) -> Result<Vec<u8>, String>` y `FnMut(&str, &[u8]) -> Result<(), String>`.
 ///
-/// Lo que se deja **sin** conectar, y por que:
+/// `write` tiene tres caminos, y el primero es el que hace que guardar funcione:
 ///
-/// * `pick_open`, `pick_save`, `pick_folder`, `pick_open_multi` son **sincronos**
-///   (`FnMut(…) -> Option<String>`), y un browser en immediate mode no puede devolver
-///   una ruta en la misma llamada en la que el usuario la elige. Es el paso siguiente y
-///   necesita una costura que hoy no existe en upstream. `open_async` y `place_async` si
-///   son asincronos y ya estan.
-///
-/// **Ahora mismo guardar y exportar siguen sin funcionar**, y no es un descuido: es que
-/// `save` escribe en la misma llamada en la que se pide la ruta (`io.rs:251-263`). Cada
-/// hueco degrada a un mensaje en vez de romper, que es el mismo camino que la web.
+/// 1. Hay bytes esperando a destino —el dialogo de guardar esta abierto—: se guardan y se
+///    devuelve `Ok(())`. **Sin esto se escribiria en un fichero llamado `Untitled.png` en
+///    la raiz**, que es el fallo que se veia antes.
+/// 2. El nombre ya esta en [`RUTAS`], o sea un segundo `Save` del mismo documento: se
+///    escribe en la ruta elegida la primera vez y no se vuelve a preguntar.
+/// 3. Cualquier otra cosa: `std::fs` normal.
 pub fn services() -> Services {
     Services {
         // MEDIDO: `open_async` y `place_async` devuelven `()` y no reciben nada
-        // (`lib.rs:159,168`). Lanzan el browser y vuelven; el resultado entra por el inbox
-        // y lo drena el motor en su propio frame.
+        // (`crates/ui-egui/src/lib.rs:159,168`). Lanzan el browser y vuelven; el resultado
+        // entra por el inbox y lo drena el motor en su propio frame.
         open_async: Some(Box::new(abrir)),
         place_async: Some(Box::new(poner)),
+        // MEDIDO: el gancho nuevo, que es `FnMut(&FilePick)`, y a diferencia de
+        // `pick_open` **si recibe filtros**. `pick_path` devuelve el nombre propuesto
+        // mientras el dialogo esta abierto.
+        save_async: Some(Box::new(guardar)),
         inbox: Some((*INBOX).clone()),
         place_inbox: Some((*PLACE_INBOX).clone()),
         read: Some(Box::new(|path: &str| std::fs::read(path).map_err(|e| format!("{path}: {e}")))),
-        write: Some(Box::new(|path: &str, bytes: &[u8]| std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}")))),
+        write: Some(Box::new(|path: &str, bytes: &[u8]| {
+            // Camino 1: hay un destino por elegir, y estos son sus bytes.
+            if RUTAS.lock().unwrap_or_else(|e| e.into_inner()).get(path).is_none()
+                && hay_guardando()
+                && el_nombre_pendiente() == path
+            {
+                *PENDIENTE.lock().unwrap_or_else(|e| e.into_inner()) = Some((path.to_string(), bytes.to_vec()));
+                log::info!("browser: {path} espera destino ({} bytes)", bytes.len());
+                return Ok(());
+            }
+            // Camino 2: segunda vez del mismo documento.
+            if let Some(destino) = RUTAS.lock().unwrap_or_else(|e| e.into_inner()).get(path).cloned() {
+                return std::fs::write(&destino, bytes).map_err(|e| format!("{destino}: {e}"));
+            }
+            // Camino 3.
+            std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
+        })),
         ..Default::default()
     }
+}
+
+/// El nombre propuesto del dialogo de guardar abierto, si lo hay.
+fn el_nombre_pendiente() -> Option<String> {
+    ESTADO.with(|c| c.borrow().as_ref().and_then(|e| e.pick.as_ref()).map(|p| p.name.clone()))
+}
+
+fn hay_guardando() -> bool {
+    ESTADO.with(|c| c.borrow().as_ref().is_some_and(|e| e.para == Para::Guardar))
 }
 
 /// El aviso de permiso, si falta.

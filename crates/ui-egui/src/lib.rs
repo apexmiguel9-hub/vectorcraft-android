@@ -157,6 +157,11 @@ pub struct Services {
     pub download: Option<DownloadFn>,
     /// Web: start an async open (bytes arrive via `inbox`).
     pub open_async: Option<Box<dyn FnMut()>>,
+    /// Start an async save: the host shows its own destination dialog and writes once the
+    /// user confirms. `pick_path` returns the suggested name meanwhile, and the host maps
+    /// that name to the chosen path in `write` — so a second save to the same document
+    /// writes without asking again. Without it, `pick_save` is used (desktop).
+    pub save_async: Option<Box<dyn FnMut(&FilePick)>>,
     /// Read the system clipboard's text (desktop). Without it, pasted text only arrives with
     /// egui's Paste event (web, and keyboard paste everywhere).
     pub clipboard_read: Option<Box<dyn FnMut() -> Option<String>>>,
