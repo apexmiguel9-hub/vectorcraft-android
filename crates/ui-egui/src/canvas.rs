@@ -553,11 +553,14 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     // what makes the silence readable.
     let multitactil = ui.input(egui::InputState::multi_touch);
     let con_dedo = ui.input(|i| i.any_touches() || i.multi_touch().is_some());
-    let m = multitactil.map(|m| (m.num_touches, m.translation_delta, m.zoom_delta));
+    // NOT `m`: `m` is the `Modifiers` destructured at the top of `handle_input`, and it is
+    // still read down to `m.shift` at the drag-commit. Shadowing it here turned every
+    // `m.command` / `m.shift` below into a field access on an `Option`.
+    let mt_log = multitactil.map(|t| (t.num_touches, t.translation_delta, t.zoom_delta));
 
     if PAN_BASE.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
         log::info!(
-            "linea base: tactil={} multitactil={m:?} pref={}",
+            "linea base: tactil={} multitactil={mt_log:?} pref={}",
             ui.input(|i| i.has_touch_screen()),
             app.session.prefs.touch_gestures,
         );
@@ -592,7 +595,7 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
             (clases, i.events.len(), i.has_touch_screen(), i.pointer.primary_down(), i.pointer.hover_pos())
         });
         log::info!(
-            "eventos: tactil={pantalla} n={n} clases={clases:?} multitactil={m:?} \
+            "eventos: tactil={pantalla} n={n} clases={clases:?} multitactil={mt_log:?} \
              primary={primary} hover={hover:?} zoom={}",
             ui.input(|i| i.zoom_delta()),
         );
