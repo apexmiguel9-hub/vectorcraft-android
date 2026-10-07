@@ -440,6 +440,7 @@ fn pan_tactil(
 /// MEDIDO que hace falta distinguir "se movio" de "se quedo quieto", y no llevar un contador
 /// de tiempo total: la cuenta va en [`ARMADO_TACTIL`] desde el momento de la pulsacion, y en
 /// cuanto el dedo se mueve el gesto se afirma como pan y el recuadro se descarta.
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct TouchPan {
     /// Cuando se pulso, en el reloj de `egui`.
     pressed_at: f64,
