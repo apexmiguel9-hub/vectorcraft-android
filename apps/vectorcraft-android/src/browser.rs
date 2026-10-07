@@ -391,7 +391,15 @@ fn mostrar_con(para: Para, nuevo: fn() -> FileDialog, filtros: Filtros, multi: b
         return;
     }
     let mut dialogo = nuevo()
-        .title(if para == Para::Poner { "Colocar" } else { "Abrir" })
+        .title(match para {
+            Para::Abrir => "Abrir",
+            Para::Poner => "Colocar",
+            // MEDIDO: faltaba este brazo y por eso el dialogo de guardar se titulaba
+            // "Abrir" —los tres botones de abajo si decian Save y Cancel—. Un titulo
+            // equivocado en un modal es peor que ninguno: dice lo contrario de lo que
+            // va a pasar.
+            Para::Guardar => "Guardar",
+        })
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .default_size(egui::vec2(760.0, 460.0))
         .show_system_files(false)
