@@ -538,7 +538,7 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
             app.session.prefs.touch_gestures,
             toques,
             multitactil,
-            ui.input(|i| i.zoom_delta),
+            ui.input(|i| i.zoom_delta()),
             ui.input(|i| i.pointer.primary_down()),
         );
     } else {
