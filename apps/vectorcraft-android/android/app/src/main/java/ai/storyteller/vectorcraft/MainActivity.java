@@ -173,20 +173,57 @@ public class MainActivity extends NativeActivity {
             if (instance == null) {
                 return "";
             }
-            android.view.View decor = instance.getWindow().getDecorView();
-            android.graphics.Rect r = decor.getRootWindowInsets();
-            if (r == null) {
-                return "";
-            }
-            android.graphics.Insets bars = r.getInsets(
-                    android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
-            float d = getResources().getDisplayMetrics().density;
+            // MEDIDO, los tres errores que dio `javac` y por que son estos:
+            //
+            //   MainActivity.java:177: incompatible types: WindowInsets cannot be converted to Rect
+            //   MainActivity.java:181: cannot find symbol: method getInsets(int), location: variable r of type Rect
+            //   MainActivity.java:183: non-static method getResources() cannot be referenced from a static context
+            //
+            // 1. `getRootWindowInsets()` devuelve **`WindowInsets`**, no `Rect`. Lo segundo
+            //    era cascada de lo primero: `getInsets(int)` no existe en `Rect`.
+            // 2. `getResources()` es de instancia y esto es un metodo estatico, asi que va
+            //    por `instance`.
+            float d = instance.getResources().getDisplayMetrics().density;
             if (d <= 0f) {
                 return "";
             }
-            return bars.left / d + "," + bars.top / d + "," + bars.right / d + "," + bars.bottom / d;
+            // MEDIDO: `WindowInsets.Type` es **API 30**, y `minSdk` es 24, asi que sin este
+            // corte sale un `NewApi` de lint. Para Android 7 a 10 se usa la via antigua,
+            // que esta deprecada pero existe desde API 20.
+            android.view.View decor = instance.getWindow().getDecorView();
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowInsets r = decor.getRootWindowInsets();
+                if (r == null) {
+                    return "";
+                }
+                android.graphics.Insets bars = r.getInsets(
+                        android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+                return bars.left / d + "," + bars.top / d + "," + bars.right / d + "," + bars.bottom / d;
+            }
+            return getSystemWindowInset(decor, d);
         } catch (Throwable t) {
             Log.w(TAG, "insets: " + t);
+            return "";
+        }
+    }
+
+    /**
+     * Los insets por la via antigua, para Android 7 a 10.
+     *
+     * <p>MEDIDO: {@code getSystemWindowInsetTop()} y hermanos estan deprecados desde API 30
+     * pero existen desde la 20, y con {@code minSdk 24} son la unica forma de cubrir esos
+     * telefonos. De ahi el {@code @SuppressWarnings}: aqui no hay alternativa y el
+     * warning no aporta.
+     */
+    @SuppressWarnings("deprecation")
+    private static String getSystemWindowInset(android.view.View decor, float density) {
+        try {
+            return decor.getSystemWindowInsetLeft() / density + ","
+                    + decor.getSystemWindowInsetTop() / density + ","
+                    + decor.getSystemWindowInsetRight() / density + ","
+                    + decor.getSystemWindowInsetBottom() / density;
+        } catch (Throwable t) {
+            Log.w(TAG, "insets (via antigua): " + t);
             return "";
         }
     }
