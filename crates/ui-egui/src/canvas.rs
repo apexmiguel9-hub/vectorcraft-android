@@ -15,13 +15,22 @@ use crate::{CacheKey, VectorcraftApp, now_ms, widgets};
 
 const RULER: f32 = 16.0;
 
-/// Rate limiter for the touch-gesture diagnostics.
+/// Line budget for the touch-gesture diagnostics.
 ///
 /// MEASURED that the Android port filters the log at `Info`, so a `debug` never shows —
-/// and raising the level floods logcat with the thousands of lines the engine emits. At
-/// `info` with **one record every 30 frames** it stays readable: at the MEASURED 125 fps
-/// that is about 4 lines per second with a finger on the screen.
-static PAN_LOG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// and raising the level floods logcat with the thousands of lines the engine emits. The
+/// diagnostics therefore spend one line **per frame while a finger is down**, refilled
+/// whenever no finger is down: at the MEASURED 125 fps a two-second drag is ~250 lines,
+/// which is the point, because the gesture can be one or two frames long and a sampled log
+/// would step straight over it.
+static PAN_LOG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(200);
+
+/// Fires exactly once, so the touch diagnostics emit one line even if no touch ever
+/// arrives. MEASURED that this is not redundant: the dense log's own condition is "a
+/// finger is down", so in the failure it exists to catch — no `Event::Touch` reaching egui
+/// at all — it would be silent forever, which is indistinguishable from the log being
+/// broken.
+static PAN_BASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Screen ↔ document mapping for one frame.
 #[derive(Clone, Copy, Debug)]
@@ -521,23 +530,51 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     // two-finger block, so it could only ever print when a multi-touch was already
     // visible: "no touches arrived" and "the block never ran" produced the *same* silence,
     // zero lines either way, for two different bugs. An instrument that cannot report
-    // absence is not an instrument, so this one is deliberately ungated and reports what
-    // egui actually holds.
-    if PAN_LOG.load(Ordering::Relaxed) == 0 {
-        PAN_LOG.store(30, Ordering::Relaxed);
+    // absence is not an instrument, so this one is deliberately ungated.
+    //
+    // MEASURED that it also has to be **dense**, not sampled every N frames, because the
+    // gesture is short. In `egui-0.36.2/src/input_state/touch_state.rs`:
+    //
+    //     fn calc_dynamic_state(&self) -> Option<DynGestureState> {   // :248
+    //         if self.active_touches.len() < 2 { None } else { … }   // :249-250
+    //     }
+    //     … else { self.gesture_state = None; }                       // :242-244
+    //
+    // so with one finger there is no gesture state at all, and the state is **discarded**
+    // rather than kept: as soon as the second finger lands, `previous` starts at `None`
+    // (`update_gesture`, `:236-238`) and `info()` substitutes `current` for `previous`
+    // (`:194-195`), making that frame's `translation_delta` exactly zero. A gesture can
+    // therefore be one or two frames long, and logging every 30th frame would sample past
+    // it entirely. So: **every frame while a finger is down**, until the budget runs out.
+    //
+    // MEASURED that the baseline below has to exist on its own. The dense log's condition
+    // is "a finger is down", so if **no** touch ever reaches egui it would never fire —
+    // which is the exact case it exists to detect. One unconditional line at startup is
+    // what makes the silence readable.
+    let multitactil = ui.input(egui::InputState::multi_touch);
+    let con_dedo = ui.input(|i| i.any_touches() || i.multi_touch().is_some());
+    let m = multitactil.map(|m| (m.num_touches, m.translation_delta, m.zoom_delta));
+
+    if PAN_BASE.compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        log::info!(
+            "linea base: tactil={} multitactil={m:?} pref={}",
+            ui.input(|i| i.has_touch_screen()),
+            app.session.prefs.touch_gestures,
+        );
+    } else if con_dedo && PAN_LOG.load(Ordering::Relaxed) > 0 {
         // MEASURED the reading that decides where the bug is, from
         // `egui-0.36.2/src/input_state/mod.rs`:
         //
-        //     pub fn has_touch_screen(&self) -> bool { !self.touch_states.is_empty() }
+        //     pub fn has_touch_screen(&self) -> bool { !self.touch_states.is_empty() }  // :845
         //
-        // `touch_states` gains entries in exactly one place —
-        // `create_touch_states_for_new_devices` (`mod.rs:851`), whose loop matches
-        // `Event::Touch { device_id, .. }` — and is **never cleared**. So
-        // `has_touch_screen` is a latch, and after the user has pinched on the device a
-        // `false` is proof that egui has not seen a single `Event::Touch` since startup:
-        // the fault is upstream of egui, in winit's input queue, not in gesture
-        // arbitration here.
-        let (clases, n, pantalla, multitactil, primary) = ui.input(|i| {
+        // `touch_states` gains entries in exactly one place,
+        // `create_touch_states_for_new_devices` (`:851`), whose loop matches
+        // `Event::Touch { device_id, .. }`, and is **never cleared**. So `has_touch_screen`
+        // is a latch: after the user has pinched on the device, a `false` is proof that
+        // egui has not seen a single `Event::Touch` since startup, and the fault lies above
+        // egui — in winit's input queue — not in gesture arbitration here.
+        PAN_LOG.fetch_sub(1, Ordering::Relaxed);
+        let (clases, n, pantalla, primary, hover) = ui.input(|i| {
             let clases: Vec<&str> = i
                 .events
                 .iter()
@@ -552,22 +589,16 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
                     _ => "otro",
                 })
                 .collect();
-            (
-                clases,
-                i.events.len(),
-                i.has_touch_screen(),
-                i.multi_touch().map(|m| (m.num_touches, m.translation_delta, m.zoom_delta)),
-                i.pointer.primary_down(),
-            )
+            (clases, i.events.len(), i.has_touch_screen(), i.pointer.primary_down(), i.pointer.hover_pos())
         });
         log::info!(
-            "eventos: tactil={pantalla} n={n} clases={clases:?} multitactil={multitactil:?} \
-             pref={} primary_down={primary} zoom={}",
-            app.session.prefs.touch_gestures,
+            "eventos: tactil={pantalla} n={n} clases={clases:?} multitactil={m:?} \
+             primary={primary} hover={hover:?} zoom={}",
             ui.input(|i| i.zoom_delta()),
         );
-    } else {
-        PAN_LOG.fetch_sub(1, Ordering::Relaxed);
+    } else if !con_dedo {
+        // Refill between interactions so each gesture gets a fresh budget.
+        PAN_LOG.store(200, Ordering::Relaxed);
     }
 
     let tool = app.session.tool_id();
