@@ -221,7 +221,23 @@ pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn e
     #[cfg(not(target_os = "android"))]
     let services = vectorcraft_ui_egui::Services::default();
 
-    Ok(Box::new(App(VectorcraftApp::new(Session::new(), services))))
+    let mut app = VectorcraftApp::new(Session::new(), services);
+    // MEDIDO: en el movil **no habia ninguna forma de panear**. Con un dedo el canvas hacia
+    // recuadro de seleccion, y con dos dedos solo habia pellizco —`canvas.rs` leia
+    // `zoom_delta` pero en ningun sitio `translation_delta`—, asi que panear dependia del
+    // boton central o de la barra espaciadora, que no existen en un tactil.
+    //
+    // MEDIDO del gesto que se enciende:
+    //
+    // | dedos | con una tool que dibuja | con seleccion, lupa, mano o rotar |
+    // |---|---|---|
+    // | 1  | dibuja desde el primer pixel | **pan**, o recuadro manteniendo 500 ms |
+    // | 2+ | pan + pellizco | pan + pellizco |
+    //
+    // MEDIDO por que un dedo panea solo con las tools que no dibujan: si panease siempre no
+    // habria forma de dibujar un rectangulo con el dedo, que es de lo que se viene.
+    app.ui.touch_gestures = true;
+    Ok(Box::new(App(app)))
 }
 
 /// Opciones de ventana.

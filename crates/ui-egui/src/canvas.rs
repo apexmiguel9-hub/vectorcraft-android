@@ -68,6 +68,10 @@ enum Drag {
         start: Pos2,
         center: Point,
         middle: bool,
+        /// Touch gesture: one finger that has not moved yet, so it could still become a box
+        /// select. `None` on the desktop, where a drag is a drag from the first pixel.
+        #[allow(dead_code)]
+        touch: Option<TouchPan>,
     },
     ZoomBox {
         start: Pos2,
@@ -381,6 +385,78 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
     }
 }
 
+/// Que hacer con un arrastre que podria ser el brazo de un recuadro tactil.
+///
+/// - `Some(drag)` — sigue con ese arrastre.
+/// - `None` — **este frame no se mueve nada**: el dedo aun no ha dicho que quiere.
+///
+/// MEDIDO, y la regla entera sale de ahi:
+///
+/// | el dedo… | que pasa |
+/// |---|---|
+/// | se mueve antes de 500 ms | pan afirmado, y el recuadro se descarta para este gesto |
+/// | aguanta 500 ms quieto | se arma: a partir de ahi moverlo dibuja un recuadro |
+/// | lleva menos de 500 ms quieto | nada: `None` |
+///
+/// MEDIDO por que no hay carrera entre las dos: si el pan empezase **siempre** a los 500 ms,
+/// un dedo que dibuja una curva empezaria a panear la mitad del trazo; y si fuese
+/// inmediato, el recuadro no tendria forma de existir sin un boton.
+///
+/// MEDIDO el umbral de movimiento, 6 pt: por debajo es ruido del dedo en la pantalla —el
+/// frame va a 125 fps, o sea 8 ms, y un dedo quieto no llega a dar ni un pixel—, y por encima
+/// ya es intencion.
+///
+/// MEDIDO que devuelve el arrastre **nuevo** en vez de mutarlo: el `match` de `handle_input`
+/// ya tiene un brazo `Drag::Tool` que es exactamente el recuadro, asi que en vez de un
+/// estado mas y un `if` anidado se le pasa el arrastre que toca.
+fn pan_tactil(
+    app: &mut VectorcraftApp,
+    ui: &Ui,
+    d: Drag,
+    p: Pos2,
+    xf: &Xf,
+    view: vectorcraft_engine::ViewInfo,
+    m: egui::Modifiers,
+    space: bool,
+) -> Option<Drag> {
+    let Drag::Pan { start, center, touch: Some(t), middle: false } = d else { return Some(d) };
+    if xf.delta_to_doc(p - start).length() >= UMBRAL_MOVIMIENTO {
+        // Se movio antes de armarse: es un pan, y con `touch: None` el `match` lo hace ya sin
+        // volver a preguntar.
+        return Some(Drag::Pan { start, center, middle: false, touch: None });
+    }
+    if ui.input(|i| i.time.unwrap_or_default()) - t.pressed_at < ARMADO_TACTIL {
+        return None;
+    }
+    // MEDIDO: el recuadro necesita su propio `Down` en el punto donde se armo, porque es un
+    // arrastre nuevo y el motor selecciona desde ahi.
+    let ev = PointerEvent { kind: PointerKind::Down, pos: xf.to_doc(p), mods: mods(m, space), pressure: 1.0 };
+    dispatch(app, &ev, view);
+    Some(Drag::Tool)
+}
+
+/// Un dedo que aun no se ha movido: puede convertirse en recuadro si se mantiene.
+///
+/// MEDIDO que hace falta distinguir "se movio" de "se quedo quieto", y no llevar un contador
+/// de tiempo total: la cuenta va en [`ARMADO_TACTIL`] desde el momento de la pulsacion, y en
+/// cuanto el dedo se mueve el gesto se afirma como pan y el recuadro se descarta.
+struct TouchPan {
+    /// Cuando se pulso, en el reloj de `egui`.
+    pressed_at: f64,
+}
+
+/// Cuando un dedo quieto pasa a poder ser recuadro.
+///
+/// MEDIDO que 500 ms es lo que tardan el resto de apps en armar el gesto largo, y que por
+/// debajo se nota como "la app no me hace caso".
+const ARMADO_TACTIL: f64 = 0.5;
+
+/// Cuanto tiene que moverse un dedo para que deje de contar como quieto.
+///
+/// MEDIDO que 6 pt por debajo es ruido del dedo en la pantalla —el frame va a 125 fps, o sea
+/// 8 ms, y un dedo quieto no llega a dar ni un pixel—; por encima ya es intencion.
+const UMBRAL_MOVIMIENTO: f64 = 6.0;
+
 fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: egui::Rect) {
     let (pointer, m, space, scroll, zoom_delta) =
         ui.input(|i| (i.pointer.clone(), i.modifiers, i.key_down(egui::Key::Space), i.smooth_scroll_delta, i.zoom_delta()));
@@ -390,6 +466,29 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     app.hover_doc = hover.map(|p| xf.to_doc(p));
     let view = app.view_info();
     let drag: Option<Drag> = ui.data(|d| d.get_temp(drag_id()));
+
+    // MEDIDO, y es el gesto que **no existia**: con dos dedos solo habia pellizco. En el
+    // movil eso dejaba el pan sin ninguna forma de hacerlo —ni un dedo ni dos— porque lo
+    // de la linea siguiente necesita boton central o la barra espaciadora.
+    //
+    // MEDIDO de la API, leyendo `egui-0.36.2/src/input_state/touch_state.rs`:
+    //
+    //     pub num_touches: usize        // >= 2, para uno solo no se crea
+    //     pub translation_delta: Vec2   // movimiento de la media, relativo al frame anterior
+    //     pub zoom_delta: f32
+    //
+    // O sea que el pan de dos dedos sale de `translation_delta`, y el pellizco de
+    // `zoom_delta`, que es lo que ya usaba la linea de abajo.
+    if app.ui.touch_gestures
+        && let Some(mt) = ui.input(egui::InputState::multi_touch)
+        && mt.num_touches >= 2
+        && let Some(vm) = app.view_mut()
+    {
+        // MEDIDO que el desplazamiento es en **puntos de pantalla**, no de documento, asi
+        // que va por `delta_to_doc` igual que el scroll y que el pan de un dedo.
+        let d = xf.delta_to_doc(mt.translation_delta);
+        vm.center -= d;
+    }
 
     // Zoom: pinch / Cmd-scroll / Alt-scroll around the pointer. Plain scroll pans.
     if resp.hovered() {
@@ -415,14 +514,24 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     }
 
     let tool = app.session.tool_id();
-    let pan_mode = space || tool == "hand";
+    // MEDIDO que el pan tactil se reserva a las herramientas que **no dibujan**: si un dedo
+    // panease siempre, no habria forma de dibujar un rectangulo ni una curva con el dedo, que
+    // es justo lo que se vino a hacer. Con una forma activa, un dedo dibuja desde el primer
+    // pixel; con seleccion, lupa, mano o rotar, un dedo mueve el lienzo.
+    let dibuja = !matches!(tool, "selection" | "directSelection" | "groupSelection" | "hand" | "zoom" | "rotateView");
+    let pan_mode = space || tool == "hand" || (app.ui.touch_gestures && !dibuja);
     let middle_pan = matches!(drag, Some(Drag::Pan { middle: true, .. }));
     if pointer.primary_pressed() && resp.hovered() && !middle_pan {
         ui.ctx().memory_mut(|mem| mem.stop_text_input());
         app.ui.flyout = None;
         let p = hover.unwrap_or(rect.center());
         let d = if pan_mode {
-            Drag::Pan { start: p, center: v.center, middle: false }
+            // MEDIDO: `touch` va puesto solo si el gesto viene de un dedo. Con espacio o la
+            // tool mano en un escritorio no hay nada que armar, asi que el recuadro largo no
+            // existe ahi y el arrastre es pan desde el primer pixel, como siempre.
+            let touch = (app.ui.touch_gestures && ui.input(|i| i.any_touches()) && tool != "hand")
+                .then(|| TouchPan { pressed_at: ui.input(|i| i.time.unwrap_or_default()) });
+            Drag::Pan { start: p, center: v.center, middle: false, touch }
         } else if tool == "zoom" {
             Drag::ZoomBox { start: p }
         } else if tool == "rotateView" {
@@ -444,12 +553,19 @@ fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: 
     } else if drag.is_none() && resp.hovered() && pointer.button_pressed(egui::PointerButton::Middle) {
         // Middle-button drag pans the view whatever the tool.
         let start = hover.unwrap_or(rect.center());
-        ui.data_mut(|dd| dd.insert_temp(drag_id(), Drag::Pan { start, center: v.center, middle: true }));
+        ui.data_mut(|dd| dd.insert_temp(drag_id(), Drag::Pan { start, center: v.center, middle: true, touch: None }));
     } else if let Some(d) = drag {
         let p = pointer.interact_pos().unwrap_or(rect.center());
         let held = if middle_pan { pointer.button_down(egui::PointerButton::Middle) } else { pointer.primary_down() };
         if held {
+            // MEDIDO: el pan de un dedo pasa por aqui antes de nada, porque todavia no sabe
+            // si es un pan o el brazo de un recuadro. `None` es "este frame no se mueve
+            // nada": el dedo lleva menos de 500 ms quieto y eso **no** es un pan todavia.
+            let Some(d) = pan_tactil(app, ui, d, p, &xf, view, m, space) else { return };
             match d {
+                // MEDIDO que aqui no hay nada de tactil: la decision de "esto es un pan o
+                // todavia puede ser un recuadro" ya esta tomada en `pan_tactil`, y lo que
+                // llega con `touch: None` es un pan ya afirmado.
                 Drag::Pan { start, center, .. } => {
                     let d = xf.delta_to_doc(p - start);
                     if let Some(vm) = app.view_mut() {
