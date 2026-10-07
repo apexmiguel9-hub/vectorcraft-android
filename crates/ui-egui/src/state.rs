@@ -217,12 +217,6 @@ pub struct UiState {
     /// Advanced toolbar (every tool group) instead of the categorized Basic toolbar.
     #[serde(default)]
     pub toolbar_advanced: bool,
-    /// Touch gestures: one finger pans and two fingers pan and pinch.
-    ///
-    /// OFF on desktop, so nothing there changes; the Android port turns it on. `#[serde(default)]`
-    /// because it lives in the saved UI state and old files must keep loading.
-    #[serde(default)]
-    pub touch_gestures: bool,
     #[serde(default = "yes")]
     pub task_bar: bool,
     /// Last tool shown in each toolbar slot (keyed by the slot's first tool id).
@@ -355,7 +349,6 @@ impl Default for UiState {
             toolbar: true,
             toolbar_double: false,
             toolbar_advanced: false,
-            touch_gestures: false,
             task_bar: true,
             slot_tool: Default::default(),
             status_bar: true,
