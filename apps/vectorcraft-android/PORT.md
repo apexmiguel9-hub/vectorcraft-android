@@ -32,7 +32,7 @@ escritorio.
 
 ### Por qué el motor **no** se tocó
 
-`Services::read` / `write` son exactamente el seam (`lib.rs:134,135`), y `open_async` +
+`Services::read` / `write` son exactamente el seam (`lib.rs:167,168`), y `open_async` +
 `inbox` y `place_async` + `place_inbox` ya existían. Con un browser propio que devuelve
 bytes, **el motor no necesita ni un cambio**.
 
@@ -289,24 +289,128 @@ completa** (`self.path.join(filename)` → `select` → `path()`).
 El renderer es **100 % CPU**: `crates/render` depende de `vello_cpu`, `vello_common`,
 `image`, `flate2`, `jpeg-encoder`, `gif`, `weezl`, `log`. Ni `wgpu`, ni `vello` de GPU. La
 GPU solo sube una textura y dibuja un quad
-(`crates/ui-egui/src/canvas.rs:1189`, `ColorImage::from_rgba_premultiplied`).
+(`crates/ui-egui/src/canvas.rs:1571`, `ColorImage::from_rgba_premultiplied`).
 
 ---
 
-## 8. Lo que NO está hecho
+## 8. Los gestos: el bug que se anulaba solo
+
+Es el hallazgo más caro de este port, así que va con su aritmética. **Un dedo es la
+herramienta, dos dedos pan y zoom a la vez** — como Figma, Procreate, Illustrator y
+Affinity.
+
+### Qué pasaba
+
+Con dos dedos, el **zoom iba bien y el pan no**. Y el pan solo aparecía si dejabas los dedos
+quietos ~1 s y luego deslizabas.
+
+### Por qué: no faltaba el gesto, se cancelaban entre sí
+
+Todo en `crates/ui-egui/src/canvas.rs`, en `handle_input`. La transformada se construye
+**una vez**, arriba del todo:
+
+```rust
+let xf = Xf::new(rect, &v);          // centro VIEJO
+```
+
+y luego, en este orden dentro del mismo frame:
+
+1. **el pan de dos dedos** — `canvas.rs:496`, `vm.center -= d;`
+2. **el zoom alrededor del puntero** — `canvas.rs:534-540`:
+
+```rust
+let before = xf.to_doc(p);                 // centro VIEJO (pre-pan)
+vm.zoom = (vm.zoom * factor).clamp(0.0313, 640.0);
+let nx = Xf { rect, zoom: vm.zoom, center: vm.center, rot: vm.rotation.to_radians() };
+let after = nx.to_doc(p);                  // centro NUEVO (post-pan)
+vm.center += before - after;
+```
+
+`before` usa el centro **anterior** al pan y `after` el **posterior**. Desarrollando, con
+`center_nuevo = center_viejo − d`:
+
+```
+before − after = d + (p−c)·(1/zoom − 1/zoom′)
+
+center_nuevo + (before − after)
+  = (center_viejo − d) + d + (p−c)·(1/zoom − 1/zoom′)
+  = center_viejo + (p−c)·(1/zoom − 1/zoom′)
+```
+
+El `−d` y el `+d` **se cancelan exactamente**. Del pan no queda nada; solo sobrevive la
+corrección de zoom. `before` y `after` asumían el mismo centro, y el pan se encarga de
+romper esa suposición un frame antes.
+
+### Por qué la pausa de un segundo lo "arreglaba"
+
+El bloque de zoom está dentro de `if (factor - 1.0).abs() > 1e-6` (`canvas.rs:534`). Con
+los dedos quietos el log da `translation=[0.0 0.0]` y `zoom=1.0`, el bloque **se salta
+entero**, nadie deshace el pan, y al deslizar funciona. Durante el pellizco `zoom ≠ 1.0`,
+el bloque entra, y el pan se anula cada frame.
+
+### El arreglo
+
+Una línea, `canvas.rs:515` (`xf` pasa a `mut`):
+
+```rust
+xf = Xf::new(rect, vm);      // justo después de `vm.center -= d`
+```
+
+para que `before` y `after` partan del mismo centro, que es la condición que la expresión
+anterior asumía en silencio y que el pan incumplía.
+
+### Cómo está medido
+
+Con el log denso del port, en el móvil, con los dedos:
+
+| | Antes | Después |
+|---|---:|---:|
+| Frames con pan **y** zoom a la vez | — | **2555** |
+| `translation_delta` ≠ 0 con 2 dedos | 74,9 % | 74,9 % |
+
+Que el `translation_delta` tuviera el **mismo** porcentaje antes y después es la prueba de
+que el gesto siempre llegó igual: **egui no era el problema**, el gasto estaba en el
+cálculo del centro. Antes esos 2555 frames de pan+zoom se perdían todos.
+
+### Un detalle que no es un detalle
+
+`egui-winit` **emula el ratón con un dedo** (`egui-winit-0.36.2/src/lib.rs:904`, *"emit
+PointerButton resp. PointerMoved events to emulate mouse"*), y solo para el primer puntero
+(`:902`). Por eso el dedo emulado te abre el menú de clic derecho al mantener pulsado y por
+eso parece que hay un "botón derecho fantasma". No viene de Android: es egui. Y con dos
+dedos, el segundo **no** se emula, que es justo lo que hace que el gesto separe limpio.
+
+### Los tres logs que no servían
+
+En el mismo fichero, tres instrumentos seguidos que no podían decir nada. Se documentan
+porque el patrón se repite y el cuarto sí funcionó:
+
+| | Por qué no decía nada |
+|---|---|
+| Log dentro del `if` de dos dedos | Solo imprimía si ya había multitáctil: "no llegan eventos" y "el bloque no corre" daban el **mismo silencio** |
+| Log muestreado cada 30 frames | El gesto dura **uno o dos frames** (`touch_state.rs:249-250`, sin margen), así que el muestreo pasaba de largo |
+| Log con `PAN_LOG == 0` | `PAN_LOG` arranca en **200**, así que la condición era falsa y **no imprimía nunca** |
+
+El que funciona gasta **una línea por frame mientras hay dedo**, con presupuesto, y añade
+una línea base incondicional al arrancar — porque si no llega ningún toque el log denso no
+diría nada, que es justo el fallo que buscaba detectar.
+
+---
+
+## 9. Lo que NO está hecho
 
 | | |
 |---|---|
 | **Teclado blando** | No aparece con `android-native-activity`. `NativeActivity` no tiene vista para el `InputMethodManager`. El arreglo es `androidx.games:games-activity:4.4.0` + la feature `game-activity` + `MainActivity extends GameActivity` |
-| **Gestos de un dedo** | Sin medir si un dedo ya panea o selecciona. La pan tool no se va a quitar |
 | ~~Rebase de upstream~~ | **Hecho**: fusionados los 188 commits con `git merge`, **un solo conflicto** (`.gitignore`). `ci-ui` verde (3776 tests) y `.so` compilando sobre el upstream nuevo. Quedan 6 commits de un panel de Capas, con un unico solape en `dialogs/mod.rs` |
 | **Export web** | Genera ficheros muy grandes. Es del motor, no del port |
 | **`pick_folder`, `pick_open_multi`** | Sin conectar: son **síncronos** (`FnMut(…) -> Option<String>`) y un diálogo immediate-mode no devuelve una ruta en la misma llamada. Afecta a *Relink to Folder* y *Package* |
 | **Jugador de vídeo / texturas** | Sin probar en el móvil |
+| **Menú que parpadea con el dedo** | **Causa ya localizada, sin arreglar.** `canvas.rs:189`: cuando el menú contextual se abre y hay un dedo pulsado, se hace `Popup::close_all` y **se salta `handle_input` entero**, así que en esos frames no corre ni el pan, ni el zoom, ni la herramienta. Con el ratón emulado de un dedo (`egui-winit-0.36.2/src/lib.rs:904`) el menú se abre y se cierra en cada toque, y de ahí el parpadeo. Es independiente del bug de la sección 8: aquel ya está arreglado y medido |
 
 ---
 
-## 9. Reproducir
+## 10. Reproducir
 
 ```bash
 gh workflow run build-android-so.yml        # o push a main; tarda ~10 min
