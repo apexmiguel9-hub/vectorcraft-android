@@ -351,7 +351,11 @@ pub fn cada_frame() {
     let ahora = quedan.saturating_sub(1);
     MIRANDO.store(ahora, Ordering::Release);
     if ahora == 0 {
-        log::info!("permiso: se deja de mirar; concedido = {concedido()}", concedido = concedido());
+        // MEDIDO: `{concedido()}` no vale como argumento con nombre —el error lo decia
+        //     expected `}` in format string
+        // asi que la llamada va como argumento normal.
+        let hay = concedido();
+        log::info!("permiso: se deja de mirar; concedido = {hay}");
     } else if antes == 1 {
         log::info!("permiso: vuelve a mirar tras volver de Ajustes");
     }
