@@ -10,7 +10,12 @@ android {
         minSdk 24
         targetSdk 34
         versionCode 1
-        versionName '0.3.0'
+        // MEDIDO: upstream subio el workspace a 0.4.0 al fusionar sus 188 commits, y aqui
+        // la version estaba a mano. El `Cargo.toml` del port si la hereda
+        // (`version.workspace = true`) y el log la imprime
+        // (`vectorcraft-android: arrancando, version …`), asi que si aqui se queda
+        // desfasada el Ajustes → Acerca de y el log dicen cosas distintas.
+        versionName '0.4.0'
 
         // MEDIDO: solo arm64-v8a. El motor es vello_cpu (CPU), y lo unico que hace
         // la GPU es presentar pixeles via egui-wgpu. Una arquitectura mas es una
