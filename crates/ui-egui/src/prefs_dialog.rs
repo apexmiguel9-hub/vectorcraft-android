@@ -121,11 +121,9 @@ pub fn apply_runtime(app: &mut VectorcraftApp, ctx: &egui::Context) {
 /// the `f32` sibling (`margin_f32.rs`), which is what a fractional budget needs.
 ///
 /// MEASURED that the path is `egui::epaint::`, **not** `egui::`: `MarginF32` is re-exported
-/// by epaint (`epaint/src/lib.rs:57`, `margin_f32::*`) but egui's own root does not list
-/// it, and `egui::MarginF32` fails to compile:
-///
-///     error[E0433]: cannot find `MarginF32` in `egui`
-///        --> crates/ui-egui/src/prefs_dialog.rs:122:39
+/// by epaint (`epaint/src/lib.rs:57`, `margin_f32::*`) but egui's own root does not list it,
+/// so naming it `egui::MarginF32` fails to compile with
+/// "cannot find `MarginF32` in `egui`" (E0433).
 ///
 /// `egui::epaint::` is already the idiom in this crate (`canvas.rs:840`, `theme.rs:295`),
 /// and it avoids adding `epaint` as a direct dependency just to name the type.
