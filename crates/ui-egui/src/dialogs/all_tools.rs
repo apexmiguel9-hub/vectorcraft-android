@@ -17,14 +17,11 @@ pub(super) const SPEC: DialogSpec = DialogSpec { heading: |_| tl!("All Tools").i
 /// so the whole thing scrolls instead of overflowing.
 ///
 /// 5 columns, against the MEASURED 937.4 pt viewport minus the 20 pt frame margin per side
-/// and the 14 pt item spacing:
-///
-///     (937.4 − 40 − 4×14) / 5 = 168.3 pt per cell
-///
-/// and the MEASURED longest English label is `Vertical Type on a Path` (23 characters,
-/// ~150 pt at 12.5 pt), which fits inside a 168 pt cell — the button's `min_size` of 150 pt
-/// plus the 10 pt grid spacing gives that cell. Six columns would leave 137.9 pt and force
-/// the longest labels to wrap; four would leave 213.8 pt and make the drawer even taller.
+/// and 4 gaps of 14 pt, which is 168.3 pt per cell. The MEASURED longest English label is
+/// `Vertical Type on a Path` (23 characters, ~150 pt at 12.5 pt), which fits inside a 168 pt
+/// cell — the button's `min_size` of 150 pt plus the 10 pt grid spacing gives that cell.
+/// Six columns would leave 137.9 pt and force the longest labels to wrap; four would leave
+/// 213.8 pt and make the drawer even taller.
 const COLS: usize = 5;
 
 /// Height of the whole scrollable list.
