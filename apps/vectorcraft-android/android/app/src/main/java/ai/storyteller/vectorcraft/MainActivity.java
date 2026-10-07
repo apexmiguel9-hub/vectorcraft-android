@@ -188,19 +188,31 @@ public class MainActivity extends NativeActivity {
                 return "";
             }
             // MEDIDO: `WindowInsets.Type` es **API 30**, y `minSdk` es 24, asi que sin este
-            // corte sale un `NewApi` de lint. Para Android 7 a 10 se usa la via antigua,
-            // que esta deprecada pero existe desde API 20.
-            android.view.View decor = instance.getWindow().getDecorView();
+            // corte sale un `NewApi` de lint. Para Android 7 a 10 se usa la via antigua de
+            // abajo.
+            android.view.WindowInsets r = instance.getWindow().getDecorView().getRootWindowInsets();
+            if (r == null) {
+                return "";
+            }
             if (android.os.Build.VERSION.SDK_INT >= 30) {
-                android.view.WindowInsets r = decor.getRootWindowInsets();
-                if (r == null) {
-                    return "";
-                }
                 android.graphics.Insets bars = r.getInsets(
                         android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
-                return bars.left / d + "," + bars.top / d + "," + bars.right / d + "," + bars.bottom / d;
+                return barras(bars.left, bars.top, bars.right, bars.bottom, d);
             }
-            return getSystemWindowInset(decor, d);
+            // MEDIDO: estos getters estan en **`WindowInsets`**, no en `View` —el error de
+            // `javac` lo decia: `location: variable decor of type View`. Y estan deprecados
+            // desde API 30 pero existen desde la 23, con `minSdk 24` cubren de sobra. El
+            // `@SuppressWarnings` va aqui y no en el helper porque el aviso salta en el punto
+            // de uso.
+            @SuppressWarnings("deprecation")
+            final int l = r.getSystemWindowInsetLeft();
+            @SuppressWarnings("deprecation")
+            final int t = r.getSystemWindowInsetTop();
+            @SuppressWarnings("deprecation")
+            final int ri = r.getSystemWindowInsetRight();
+            @SuppressWarnings("deprecation")
+            final int b = r.getSystemWindowInsetBottom();
+            return barras(l, t, ri, b, d);
         } catch (Throwable t) {
             Log.w(TAG, "insets: " + t);
             return "";
@@ -208,24 +220,14 @@ public class MainActivity extends NativeActivity {
     }
 
     /**
-     * Los insets por la via antigua, para Android 7 a 10.
+     * Los cuatro insets en puntos, como {@code "l,t,r,b"}.
      *
-     * <p>MEDIDO: {@code getSystemWindowInsetTop()} y hermanos estan deprecados desde API 30
-     * pero existen desde la 20, y con {@code minSdk 24} son la unica forma de cubrir esos
-     * telefonos. De ahi el {@code @SuppressWarnings}: aqui no hay alternativa y el
-     * warning no aporta.
+     * <p>MEDIDO que hace falta un helper y no repetir la concatenacion en las dos vias: los
+     * getters deprecados y los de API 30 dan enteros de la misma manera, asi que el
+     * formato se decide una vez.
      */
-    @SuppressWarnings("deprecation")
-    private static String getSystemWindowInset(android.view.View decor, float density) {
-        try {
-            return decor.getSystemWindowInsetLeft() / density + ","
-                    + decor.getSystemWindowInsetTop() / density + ","
-                    + decor.getSystemWindowInsetRight() / density + ","
-                    + decor.getSystemWindowInsetBottom() / density;
-        } catch (Throwable t) {
-            Log.w(TAG, "insets (via antigua): " + t);
-            return "";
-        }
+    private static String barras(int left, int top, int right, int bottom, float density) {
+        return left / density + "," + top / density + "," + right / density + "," + bottom / density;
     }
 
     @Override
