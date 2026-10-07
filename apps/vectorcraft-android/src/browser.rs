@@ -186,7 +186,12 @@ pub fn logic(ctx: &egui::Context) {
         // MEDIDO, y es la instrumentacion del bug de las carpetas: un registro por
         // cambio de directorio, no uno por frame.
         let ahora = estado.dialogo.directory().to_path_buf();
-        let cambio = ULTIMO_DIR.lock().unwrap_or_else(|e| e.into_inner()) != Some(ahora.clone());
+        // MEDIDO, y el error lo decia:
+        //     `MutexGuard<'_, Option<PathBuf>>` does not implement `PartialEq<Option<PathBuf>>`
+        // El guard no implementa `PartialEq`, asi que hay que sacar el valor antes de
+        // comparar. Y el `if` en vez de `replace(...).is_none()` porque `replace` devuelve
+        // el valor viejo, no un booleano —eso si compila, pero no dice lo que parece.
+        let cambio = ULTIMO_DIR.lock().unwrap_or_else(|e| e.into_inner()).as_ref() != Some(&ahora);
         if cambio {
             ULTIMO_DIR.lock().unwrap_or_else(|e| e.into_inner()).replace(ahora.clone());
             // MEDIDO que no se puede contar las entradas: `egui_file` no expone el

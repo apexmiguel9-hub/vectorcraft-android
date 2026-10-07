@@ -284,7 +284,10 @@ fn leer() {
         // * `Permission denied` en `/storage/emulated/0` siendo que el permiso estaba
         //   concedido, que ademas es lo que hacia fallar el navegador de vez en cuando
         let v = match v {
-            jni::JValueOwned::Bool(b) => b != jni::sys::jboolean::FALSE,
+            // MEDIDO: en `jni-sys` 0.4 `jboolean` **es** `bool`, no un entero. Por eso
+            // no hay constante `FALSE` a la que comparar —el error lo decia:
+            //     no associated function or constant named `FALSE` found for type `bool`
+            jni::JValueOwned::Bool(b) => b,
             _ => false,
         };
         Ok(Ok(v))
