@@ -255,10 +255,16 @@ fn mostrar(para: Para, nuevo: fn() -> FileDialog, filtros: Filtros, multi: bool)
             }
         }));
     }
-    // MEDIDO: arrancar en un sitio real. Sin permiso, `/storage/emulated/0` no se puede
-    // ni listar, asi que se abre en lo nuestro, que siempre se puede.
-    let inicio = if permiso::concedido() { PathBuf::from("/storage/emulated/0") } else { permiso::directorio_privado() };
-    dialogo = dialogo.initial_path(inicio);
+    // MEDIDO, y aqui se corrigio una decision previa: el arranque va **siempre** a
+    // `/storage/emulated/0`, sin mirar el permiso.
+    //
+    // Estaba condicionado a `permiso::concedido()`, y con el permiso denial apareceria
+    // `Permission denied` en el navegador. Que es peor que vacio, porque no dice que
+    // hacer: "sin permiso" no es un error de la app, es lo que pasa.
+    //
+    // Y el dialogo tiene campo de path, asi que se puede escribir cualquiera. El
+    // unico sitio al que hay que ir con cuidado es este.
+    dialogo = dialogo.initial_path(PathBuf::from("/storage/emulated/0"));
     // MEDIDO, y lo dice el propio error de compilacion:
     //     expected `FileDialog`, found `()`
     //     note: method `open` modifies its receiver in-place
