@@ -264,9 +264,27 @@ fn leer() {
         if let Some(x) = excepcion(e) {
             return Ok(Err(x));
         }
-        // MEDIDO: un `boolean` de Java llega como `jboolean` dentro de `JValueOwned::Int`.
+        // MEDIDO, y este era el fallo entero de la deteccion del permiso. Un `boolean`
+        // de Java llega en su **propia** variante, no como `Int`:
+        //
+        //     jni-0.22.4/src/jvalue.rs:24
+        //     pub enum JValueOwned<'local> {
+        //         Object(JObject<'local>), Byte(jbyte), Char(jchar), Short(jshort),
+        //         Int(jint), Long(jlong),
+        //         Bool(jboolean),                 // ← esta
+        //         Float(jfloat), Double(jdouble), Void,
+        //     }
+        //
+        // Con `match v { JValueOwned::Int(n) => …, _ => false }` la rama `_` se llevaba
+        // **siempre**, asi que `concedido()` era `false` para siempre. Y eso explicaba
+        // tres cosas a la vez, todas medidas en el movil:
+        //
+        // * `permiso: se deja de mirar; concedido = false` con el appop ya en `allow`
+        // * el aviso de permiso, que no se iba nunca
+        // * `Permission denied` en `/storage/emulated/0` siendo que el permiso estaba
+        //   concedido, que ademas es lo que hacia fallar el navegador de vez en cuando
         let v = match v {
-            jni::JValueOwned::Int(n) => n != 0,
+            jni::JValueOwned::Bool(b) => b != jni::sys::jboolean::FALSE,
             _ => false,
         };
         Ok(Ok(v))

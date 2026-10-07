@@ -159,6 +159,15 @@ thread_local! {
     static ESTADO: RefCell<Option<Estado>> = const { RefCell::new(None) };
 }
 
+/// El directorio que se vio por ultima vez, para registrar **solo** los cambios.
+///
+/// MEDIDO por que hace falta: el bug que se midio en el movil es que al tocar una carpeta
+/// a veces no se abre —uno de cada dos o tres— y sin esto no hay manera de saber si el
+/// toque llego al dialogo o no:
+/// * si el log **no** cambia de directorio, el toque no llego, y el problema es de entrada
+/// * si cambia pero la rejilla se queda vacia, el problema es de lectura
+static ULTIMO_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 /// Un frame del update.
 ///
 /// Se llama **antes** de `VectorcraftApp::logic`, a proposito: si el browser acaba de
@@ -173,6 +182,19 @@ pub fn logic(ctx: &egui::Context) {
         let Some(estado) = caja.as_mut() else { return };
 
         estado.dialogo.show(ctx);
+
+        // MEDIDO, y es la instrumentacion del bug de las carpetas: un registro por
+        // cambio de directorio, no uno por frame.
+        let ahora = estado.dialogo.directory().to_path_buf();
+        let cambio = ULTIMO_DIR.lock().unwrap_or_else(|e| e.into_inner()) != Some(ahora.clone());
+        if cambio {
+            ULTIMO_DIR.lock().unwrap_or_else(|e| e.into_inner()).replace(ahora.clone());
+            // MEDIDO que no se puede contar las entradas: `egui_file` no expone el
+            // listado, solo `selection()`. Asi que el log dice donde estamos y no cuanto
+            // hay, que es lo que hace falta para distinguir "el toque no llego" de "llego
+            // y no se pudo leer".
+            log::info!("browser: directorio -> {}", ahora.display());
+        }
 
         match estado.dialogo.state() {
             State::Selected => {
