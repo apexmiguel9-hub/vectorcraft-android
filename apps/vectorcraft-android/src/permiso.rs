@@ -257,7 +257,10 @@ pub fn insets() -> [f32; 4] {
     // `env` aplana el `Result` anidado de `con_env`, asi que aqui hay un solo nivel. Los
     // `Ok(Ok(..))` que quedan en el archivo estan *dentro* de las closures —que si
     // devuelven el anidado— y ahi son correctos; el que falla es el `match` de fuera.
-    match r {
+    // MEDIDO: esto se registra porque sin el no hay forma de saber si los insets llegan.
+    // La primera vez que se registra un valor distinto del anterior, a nivel `info` —los
+    // `debug` no salen, el filtro esta en `Info`.
+    let v = match r {
         Ok(s) if !s.is_empty() => parsea(&s),
         // MEDIDO que sin ventana no es un fallo: al principio no hay, y ceros deja que
         // egui use la ventana entera, que es lo de siempre.
@@ -266,7 +269,30 @@ pub fn insets() -> [f32; 4] {
             log::debug!("permiso: {e}");
             [0.0; 4]
         }
+    };
+    // Solo cuando cambia, para no llenar el logcat de una linea por frame.
+    let empaquetado = empaqueta(v);
+    if ULTIMO_INSET.load(Ordering::Acquire) != empaquetado {
+        ULTIMO_INSET.store(empaquetado, Ordering::Release);
+        log::info!("insets: l={} t={} r={} b={}", v[0], v[1], v[2], v[3]);
     }
+    v
+}
+
+/// Los ultimos insets leidos, solo para no repetir el log.
+static ULTIMO_INSET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Los cuatro insets empaquetados en un `u64` para poder compararlos de una vez.
+fn empaqueta(v: [f32; 4]) -> u64 {
+    // MEDIDO que hacer la comparacion con un `AtomicU64` y no con `[f32; 4]`: no hay
+    // `Atomic` para arrays, y un `Mutex` aqui estaria en el camino caliente de cada frame
+    // para no compar nada.
+    let mut bits = 0u64;
+    for (i, x) in v.iter().enumerate() {
+        let b = (*x * 16.0).round().clamp(-1.0e6, 1.0e6) as i64 as u16 as u64;
+        bits |= b << (i * 16);
+    }
+    bits
 }
 
 /// `"l,t,r,b"` -> `[l, t, r, b]`, o ceros si no cuadra.

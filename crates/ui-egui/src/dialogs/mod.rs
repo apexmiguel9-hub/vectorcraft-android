@@ -327,9 +327,15 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             // ~470 pt preview, so it wanted ~932 x ~586. `Save for Web` is the widest and
             // tallest dialog in the set; on a desktop window nothing ever hit this.
             //
-            // MEDIDO that the anchor sits 40 pt above the centre (`ANCHOR_Y`), so that is
-            // subtracted too: the room below the centre is less than the window's half.
-            let alto = (ctx.content_rect().height() - 2.0 * (f32::from(MARGIN) + EDGE_GAP) - ANCHOR_Y.abs()).max(EDGE_GAP);
+            // The anchor sits `ANCHOR_Y` **above** the middle, so the window hangs over the
+            // top of the free area by that much. It has to be given room twice: once for the
+            // shift and once as clearance, or the heading ends up under the status bar.
+            //
+            // MEDIDO, on the 2400x1080 phone in landscape: `content_rect()` is 418.9 pt
+            // tall after the 24.2 pt status bar, and with a single subtraction the window's
+            // top lands at 34.2 pt — measured, it landed at 13.8 pt and the heading was
+            // cut. With the offset counted twice the window fits top and bottom.
+            let alto = (ctx.content_rect().height() - 2.0 * (f32::from(MARGIN) + EDGE_GAP) - 2.0 * ANCHOR_Y.abs()).max(EDGE_GAP);
             ui.set_max_height(alto);
             ui.label(egui::RichText::new(heading.as_str()).font(theme::semibold(16.0)).color(t.text));
             ui.add_space(12.0);
