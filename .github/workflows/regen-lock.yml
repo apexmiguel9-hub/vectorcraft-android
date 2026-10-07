@@ -1,0 +1,59 @@
+name: Regenerar Cargo.lock
+
+# Por que existe esto, MEDIDO:
+#
+# `Cargo.lock` esta commiteado, y el CI compila con `--locked`, asi que cualquier cambio en
+# un manifiesto que no llegue al lock rompe **las dos** builds con:
+#
+#     error: the lock file … needs to be updated but --locked was passed to prevent this
+#
+# Y al fusionar los 188 commits de upstream (workspace 0.3.0 -> 0.4.0) la entrada de
+# `vectorcraft-android` se quedo en `0.3.0` en el lock. Son **tres lineas**, pero no se
+# pueden escribir a mano de forma fiable:
+#
+# * MEDIDO que **`cargo generate-lockfile` en local baja versiones**, porque el cargo local
+#   es mas antiguo que el `rust-version` del workspace. Lo dice el propio comando:
+#
+#       Adding zvariant v5.9.2 (available: v5.15.0, requires Rust 1.87)
+#
+#   Es decir, regenerar con un toolchain viejo produce un lock que no es el que quiere el
+#   proyecto, y el fallo sale dias despues como una dependencia que ayer funcionaba.
+# * Por eso el lock se regenera **aqui**, con `dtolnay/rust-toolchain@stable`, que es el
+#   mismo toolchain que usan `build-android-so.yml` y `ci-ui.yml`.
+#
+# Se dispara a mano y sube el `Cargo.lock` como artefacto; se descarga y se commitea.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain de Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # MEDIDO que esto es informativo y no un fallo: el objetivo es ver que version se
+      # esta usando, porque la diferencia entre este `cargo` y uno viejo es exactamente lo
+      # que baja versiones en el lock.
+      - name: Decir que rustc se va a usar
+        run: |
+          echo "toolchain: $(rustc --version)"
+          echo "cargo:     $(cargo --version)"
+
+      # MEDIDO que NO se pasa `--offline`: hacen falta las dependencias para resolver.
+      - name: Regenerar el lock
+        run: cargo generate-lockfile
+
+      # MEDIDO que se sube solo el lock y no el arbol entero: el `Cargo.lock` es lo unico
+      # que sale de aqui, y subir mas haria que el artefacto se comiese los 315 ficheros.
+      - name: Subir el lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cargo.lock
+          path: Cargo.lock
+          if-no-files-found: error
