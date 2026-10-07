@@ -159,39 +159,16 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     // Same trap as `new_document.rs`: `inner_margin` adds outside, not inside. So the two
     // heights are clamped against what is actually left after the frame margins, the
     // heading, and the button row — everything that sits outside the scroll area.
-    // MEASURED off the phone screenshot, and this is the second half of the bug the first
-    // commit only half-fixed. With `set_min_height(alto_lista)` the dialog asked for 378.9 pt
-    // but the window measured **418.5 pt** on a 443.1 pt viewport — 39.6 pt more than asked,
-    // and it reached y=1079 of 1080 px, i.e. **flush against the bottom edge** with no
-    // margin, while the heading stayed cut at the top.
-    //
-    // The cause: `set_min_height` sets a **floor, not a ceiling**. The MEASURED 9 preference
-    // categories at 24 pt each plus 1 pt of spacing want 224 pt, plus the frame's own 12 pt
-    // of inner margin is 236 pt — already 23.9 pt more than the 212.1 pt budget. So the list
-    // overflowed on its own content and pushed the window past its allowance; clamping the
-    // floor does nothing about that.
-    //
-    // A `ScrollArea` is the right tool because it is the only one that puts a **ceiling** on
-    // it. The MEASURED `RESPIRO` is the air left above and below so the dialog reads as
-    // *placed* rather than merely not-clipped — with zero it sits exactly on the status bar
-    // and the nav bar, which is what the screenshot showed.
-    const RESPIRO: f32 = 12.0;
-    let ventana_h = (ctx.content_rect().height() - RESPIRO * 2.0).max(200.0);
-    let avail_h = (ventana_h - MARGIN.left - MARGIN.right - CHROME_H).max(80.0);
-    let alto_lista = avail_h;
-    let alto_campos = avail_h;
+    let avail_h = ctx.content_rect().height() - MARGIN.left - MARGIN.right - CHROME_H;
+    let alto_lista = (430.0f32).min(avail_h).max(120.0);
+    let alto_campos = (400.0f32).min(avail_h).max(80.0);
     egui::Window::new(tl!("Preferences"))
         .id(egui::Id::new("dialog-preferences"))
         .order(egui::Order::Foreground)
         .collapsible(false)
         .resizable(false)
         .title_bar(false)
-        // MEASURED that this offset had to go. With `[0.0, -20.0]` on a MEASURED 443.1 pt
-        // viewport the window was pushed 20 pt up, so the heading sat **under the status
-        // bar** and was cut off — the screenshot shows "General" clipped at the top. The
-        // `RESPIRO` above now leaves the air that the offset used to steal, so `CENTER_CENTER`
-        // on its own centres it.
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0])
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(MARGIN))
         .show(ctx, |ui| {
             ui.set_width(760.0);
@@ -199,28 +176,22 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             ui.add_space(12.0);
             ui.horizontal_top(|ui| {
                 // Category list.
-                // MEASURED that this had to stop being `set_min_height`: a floor cannot stop
-                // a list whose content is already taller than the budget, so it overflowed and
-                // pushed the whole window past the screen. A `ScrollArea` is a ceiling.
                 egui::Frame::NONE.fill(t.panel_darker).corner_radius(egui::CornerRadius::same(4)).inner_margin(egui::Margin::same(6)).show(
                     ui,
                     |ui| {
                         ui.set_width(196.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt(("prefs-cat", cat))
-                            .max_height(alto_lista)
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for c in PREF_CATEGORIES {
-                                    let sel = *c == cat;
-                                    let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
-                                    let b = egui::Button::selectable(sel, text).frame_when_inactive(false).min_size(egui::vec2(184.0, 24.0));
-                                    if ui.add(b).clicked() {
-                                        d.fields.insert("__category".into(), json!(c));
-                                    }
+                        ui.set_min_height(alto_lista);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            for c in PREF_CATEGORIES {
+                                let sel = *c == cat;
+                                let text = egui::RichText::new(tl!(*c)).size(12.5).color(if sel { t.text_strong } else { t.text });
+                                let b = egui::Button::selectable(sel, text).frame_when_inactive(false).min_size(egui::vec2(184.0, 24.0));
+                                if ui.add(b).clicked() {
+                                    d.fields.insert("__category".into(), json!(c));
                                 }
-                            });
+                            }
+                        });
                     },
                 );
                 ui.add_space(14.0);
