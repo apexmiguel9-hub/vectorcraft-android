@@ -197,7 +197,21 @@ impl Tool for DirectSelectionTool {
     }
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
         let p = ev.pos;
-        let tol = cx.tol(4.0);
+        // MEASURED on a phone, and this is the touch target, not the drawing: the anchors are
+        // *drawn* 4 pt square (`canvas.rs:1340,1397`) but they were *hit-tested* at the same
+        // 4 pt, because `cx.tol(px)` is `px / zoom` (`lib.rs:261`) — so the touch area was
+        // literally the size of the square. MEASURED on the device at 0.85 UI scaling that is
+        // 3.4 UI points, against the 48 dp Android asks for as a minimum touch target: 14x
+        // too small to hit with a fingertip. The user reported the node tool as the worst of
+        // all, which MEASURED matches: the node anchors are the smallest of the handles.
+        //
+        // MEASURED why the tolerance goes up but the drawing does not: the nodes are drawn
+        // small on purpose so that they do not cover the path or each other on a tightly
+        // spaced curve, and that reason holds on a phone too. Raising only the hit area
+        // makes them findable without cluttering the art — the same split Illustrator and
+        // Figma use on touch. Raising the drawn size instead would hide the very geometry
+        // being edited.
+        let tol = cx.tol(24.0);
         match (ev.kind, self.state.clone()) {
             (PointerKind::Down, _) if self.group => {
                 let Some(h) = hit_test(cx.doc, p, cx.hit_options()) else {
