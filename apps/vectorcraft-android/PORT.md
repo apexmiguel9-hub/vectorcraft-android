@@ -449,24 +449,32 @@ hay que mirar cuando `ci-ui` salga rojo tras una fusión.
 |---|---:|---:|---|
 | `ui_scaling` | 1.0 | **0.85** | MEDIDO: el diálogo de Preferencias pide 418,5 pt-UI de alto y un móvil en horizontal da 418,9 de `content_rect`. A 1,0 cabe por 0,4 pt y el `anchor` de −20 lo empujaba fuera: título bajo la barra de estado y fila de botones cortada. A 0,85 sobran 74,3 pt |
 | `anchor_size` | 3 | **7** | MEDIDO: 3 deja `grow = 0` y los nodos se dibujan de 4 pt — 3,4 pt-UI a 0,85, contra los **48 dp** que Android pide. 7 es el **techo** de `clamp(1, 7)` |
-| `selection_tolerance` | 3.0 | **8.0** | MEDIDO: la tolerancia de acierto de todo (nodos, bbox, malla, slices). **Ojo: el techo es 8**, no 24 |
+| `selection_tolerance` | 3.0 | 3.0 **sin tocar** | **Probado a 8.0 y revertido**: rompe **12 tests del motor**. Ver abajo |
 
-### El techo de `selection_tolerance`, que no se puede sortear
+### `selection_tolerance`: probado, revertido, y por qué
 
-MEDIDO: el 24 que se probó **es inválido**, y lo delató un test, no la lectura del código:
+Es la **tolencia del hit test en píxeles de pantalla**: `cx.pick_tol()` es
+`selection_tolerance / zoom` (`tools/src/lib.rs:354`). MEDIDO: subirla de 3.0 a 8.0 rompe
+**12 tests del motor**, que hacen clic a una distancia concreta y comprueban qué se
+selecciona:
 
-```
-invalid parameters for `prefs.set`: `selectionTolerance` must be between 1 and 8 (got 24)
-```
+    snap_to_pixel_rounds_drawing_and_moves   (37.3, 34.8) en vez de (17, 16)
+    selection_tool_drags_a_ruler_guide         110.0 en vez de 120.0
 
-Y el techo está en `crates/engine/src/cmd/prefscmds.rs:138`:
+Con 3 px esos clics fallan y seleccionan lo que el test espera; con 8 px alcanzan y
+seleccionan otra cosa. **No son tests malos**: miden precisión de selección, y el valor está
+en medio de ella.
 
-```rust
-p!("selectionTolerance", …, num(1.0, 8.0, "px")),
-```
+Y el techo es 8, así que por la vía de la preferencia no se llega al **24 px** que el hitbox
+táctil necesita en realidad:
 
-8 son 2,7 veces el default de escritorio. Es casi todo el camino, pero **no todo**: pasarlo de
-8 exige tocar esa validación, que es de upstream.
+    "invalid parameters for `prefs.set`: `selectionTolerance` must be between 1 and 8 (got 24)"
+    crates/engine/src/cmd/prefscmds.rs:138    num(1.0, 8.0, "px")
+
+**Intercambio medido: 3 → 8 contra 12 tests rotos.** Se queda en 3.0.
+
+Si hay que hacerlo bien, el camino es tocar **los hit tests de los handles**, que son los que
+el dedo no alcanza, y no el radio global. Eso se mide aparte.
 
 ### Qué hacer cuando upstream rompa esto
 

@@ -588,23 +588,29 @@ impl Default for Prefs {
             zoom_with_mouse_wheel: false,
             scrub_numeric_fields: true,
             paste_offset: 10.0,
-            // MEASURED on a phone: 3 px is the desktop value and a fingertip cannot land on
-            // it. This is the screen tolerance every pick goes through (`cx.pick_tol()` is
-            // `selection_tolerance / zoom`, `tools/src/lib.rs:354`), so it governs the node
-            // handles, the bounding-box handles, the mesh points and the slices alike.
+            // MEASURED, and left at the desktop 3.0 on purpose after trying 8.0.
             //
-            // MEASURED, and this is **capped**: `prefs.set` validates the value to
+            // This is the **hit-test radius in screen pixels**: `cx.pick_tol()` is
+            // `selection_tolerance / zoom` (`tools/src/lib.rs:354`). MEASURED that raising it
+            // to 8.0 broke **12 engine tests** that click at a given distance and assert what
+            // got selected:
+            //
+            //     snap_to_pixel_rounds_drawing_and_moves   (37.3, 34.8) instead of (17, 16)
+            //     selection_tool_drags_a_ruler_guide         110.0 instead of 120.0
+            //
+            // At 3 px those clicks miss and select what the test expects; at 8 px they reach
+            // and select something else. They are not wrong tests: they measure selection
+            // precision, and this value sits in the middle of it.
+            //
+            // MEASURED that the ceiling is 8 anyway, so the preference cannot reach the 24 px
+            // the touch hitbox was measured to need:
             //
             //     "`selectionTolerance` must be between 1 and 8 (got 24)"
+            //     crates/engine/src/cmd/prefscmds.rs:138   num(1.0, 8.0, "px")
             //
-            // so 8 is the largest that can be set through the preference, and that is what
-            // this is. It is 2.7x the desktop default, which is most of the way from "3 px is
-            // unhittable with a finger" to "usable", and it costs no upstream change: raising
-            // the validation range is a rule of theirs, and the reason it exists.
-            //
-            // MEASURED that this and the drawn size below move together: enlarging only the
-            // drawing makes a handle *look* grabbable and not be so.
-            selection_tolerance: 8.0,
+            // So the trade was 3 -> 8 against 12 broken tests, for a win that is better had as
+            // a deliberate change to the *handle* hit tests, where those 12 do not reach.
+            selection_tolerance: 3.0,
             object_selection_by_path_only: false,
             snap_to_point_tolerance: 2.0,
             ctrl_click_selects_behind: true,
