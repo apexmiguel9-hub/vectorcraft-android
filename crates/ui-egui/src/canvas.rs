@@ -2332,6 +2332,12 @@ mod tests {
         app.session.execute("file.new", &json!({"width": 400, "height": 300})).unwrap();
         app.session.execute("shape.rectangle", &json!({"x": 150, "y": 100, "width": 100, "height": 100})).unwrap();
         let ctx = egui::Context::default();
+        // MEASURED that the baseline has to be set explicitly rather than read from
+        // `Prefs::default()`. This test is about `anchor_size` **scaling** the handles, and
+        // the default is now 7 (measured on a phone: the handles have to be reachable with a
+        // fingertip, `engine/src/lib.rs`), so reading it here made the test assert the phone
+        // sizes twice and fail. Pinning the baseline is what makes it test the scaling.
+        app.session.execute("prefs.set", &json!({"key": "anchorSize", "value": 3})).unwrap();
         // The sizes of the squares drawn (anchors and handles are squares).
         let sizes = |app: &mut VectorcraftApp| {
             let mut v: Vec<f32> = shapes(app, &ctx).iter().filter_map(|s| if let Shape::Rect(r) = s { Some(r.rect.width()) } else { None }).collect();
@@ -2356,6 +2362,11 @@ mod tests {
         let id = app.session.execute("shape.ellipse", &json!({"x": 100, "y": 100, "width": 100, "height": 100})).unwrap()["id"].clone();
         app.session.select_tool("directSelection", app.view_info()).unwrap();
         let ctx = egui::Context::default();
+        // MEASURED, same reason as `anchor_size_scales_anchors_and_handles` above: the handle
+        // radius here is `2.75 + grow / 2`, and `grow` comes from `anchor_size`, whose default
+        // is now 7 on Android (`engine/src/lib.rs`). Pinned here so this test is about
+        // `handle_style` — which is what it is named for — and not about the default.
+        app.session.execute("prefs.set", &json!({"key": "anchorSize", "value": 3})).unwrap();
         let select = |app: &mut VectorcraftApp, anchors: serde_json::Value| {
             app.session.execute("select.anchors", &json!({"id": id, "anchors": anchors, "mode": "set"})).unwrap();
         };

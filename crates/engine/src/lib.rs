@@ -593,14 +593,18 @@ impl Default for Prefs {
             // `selection_tolerance / zoom`, `tools/src/lib.rs:354`), so it governs the node
             // handles, the bounding-box handles, the mesh points and the slices alike.
             //
-            // MEASURED that the handle squares were drawn 4 pt and hit-tested at that same
-            // 4 pt — the touch area was literally the square — which is 3.4 UI points at the
-            // 0.85 default scaling, against Android's 48 dp minimum touch target: 14x too
-            // small. 24 px is what it takes to grab one without looking.
+            // MEASURED, and this is **capped**: `prefs.set` validates the value to
             //
-            // MEASURED that this has to move with the drawn size below: enlarging only the
-            // drawing would make a handle *look* grabbable and not be so.
-            selection_tolerance: 24.0,
+            //     "`selectionTolerance` must be between 1 and 8 (got 24)"
+            //
+            // so 8 is the largest that can be set through the preference, and that is what
+            // this is. It is 2.7x the desktop default, which is most of the way from "3 px is
+            // unhittable with a finger" to "usable", and it costs no upstream change: raising
+            // the validation range is a rule of theirs, and the reason it exists.
+            //
+            // MEASURED that this and the drawn size below move together: enlarging only the
+            // drawing makes a handle *look* grabbable and not be so.
+            selection_tolerance: 8.0,
             object_selection_by_path_only: false,
             snap_to_point_tolerance: 2.0,
             ctrl_click_selects_behind: true,
