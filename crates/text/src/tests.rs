@@ -271,7 +271,7 @@ fn on_path_placement() {
     line.move_to((0.0, 50.0));
     line.line_to((500.0, 50.0));
     let mut t = point("Path", style(20.0));
-    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&line), start: 0.1 };
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&line), start: 0.1, end: None };
     let l = layout(db(), &t);
     assert!(l.on_path && !l.overflow);
     assert_eq!(l.glyphs.len(), 4);
@@ -283,7 +283,7 @@ fn on_path_placement() {
     let mut v = BezPath::new();
     v.move_to((0.0, 0.0));
     v.line_to((0.0, 300.0));
-    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&v), start: 0.0 };
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&v), start: 0.0, end: None };
     let l = layout(db(), &t);
     for g in &l.glyphs {
         assert!((g.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-3);
@@ -302,7 +302,7 @@ fn on_path_effects_orient_glyphs() {
     diag.move_to((0.0, 0.0));
     diag.line_to((400.0, 400.0));
     let mut t = point("H", style(40.0));
-    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&diag), start: 0.1 };
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&diag), start: 0.1, end: None };
     let bbox = |t: &TextObject| layout(db(), t).glyphs[0].outline.bounding_box();
     let rainbow = bbox(&t);
     t.path_effect = PathEffect::StairStep;
@@ -315,7 +315,7 @@ fn on_path_effects_orient_glyphs() {
     assert!(skew.height() > stair.height() && skew.width() < rainbow.width() + 1e-6, "{skew:?}");
     // Gravity on a circle: glyphs point away from the centre (same as Rainbow on a circle).
     let circle = kurbo::Circle::new((0.0, 0.0), 100.0).to_path(0.1);
-    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&circle), start: 0.0 };
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&circle), start: 0.0, end: None };
     t.path_effect = PathEffect::Rainbow;
     let a = layout(db(), &t).glyphs[0].outline.bounding_box();
     t.path_effect = PathEffect::Gravity;
@@ -329,7 +329,7 @@ fn on_path_effects_orient_glyphs() {
 fn on_path_circle_and_overflow() {
     let circle = kurbo::Circle::new((0.0, 0.0), 100.0).to_path(0.1);
     let mut t = point("Around the circle", style(14.0));
-    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&circle), start: 0.0 };
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&circle), start: 0.0, end: None };
     let l = layout(db(), &t);
     assert!(!l.overflow);
     for g in &l.glyphs {
@@ -339,7 +339,7 @@ fn on_path_circle_and_overflow() {
     let mut short = BezPath::new();
     short.move_to((0.0, 0.0));
     short.line_to((30.0, 0.0));
-    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&short), start: 0.0 };
+    t.kind = TextKind::OnPath { path: PathData::from_bezpath(&short), start: 0.0, end: None };
     let l = layout(db(), &t);
     assert!(l.overflow && l.glyphs.len() < t.plain_text().len());
 }
@@ -490,4 +490,118 @@ fn vertical_area_type_wraps_into_columns_inside_the_frame() {
     assert!(l.lines.len() > 1);
     assert!(l.glyphs.iter().all(|g| g.origin.x >= 0.0 && g.origin.x <= 100.0 && g.origin.y >= 0.0 && g.origin.y <= 65.0));
     assert!(l.glyphs[l.lines[1].glyph_start].origin.x < l.glyphs[0].origin.x);
+}
+
+/// Justified Japanese lines (no word spaces) spread the leftover room over the gaps between their
+/// characters (JLREQ 3.8), not inside a Latin word; the last line of a paragraph stays set solid.
+#[test]
+fn justified_japanese_lines_spread_between_characters() {
+    // The ideographs' advance in the fonts at hand, measured; five fit a line, 10 pt left over.
+    let measure = layout(db(), &point("一", style(20.0)));
+    let a = measure.glyphs[0].advance;
+    let width = 5.0 * a + 10.0;
+    let t = area("一二三四五六七", style(20.0), Rect::new(0.0, 0.0, width, 400.0), Justify::JustifyLeft);
+    let l = layout(db(), &t);
+    let first = &l.glyphs[l.lines[0].glyph_start..l.lines[0].glyph_end];
+    assert_eq!(first.len(), 5);
+    for w in first.windows(2) {
+        assert!((w[1].origin.x - w[0].origin.x - (a + 2.5)).abs() < 0.01, "10 pt over 4 gaps");
+    }
+    let end = first.last().map(|g| g.origin.x + a).unwrap();
+    assert!((end - width).abs() < 0.01, "the line reaches the frame's edge: {end} vs {width}");
+    // The last line keeps its natural spacing.
+    let last = &l.glyphs[l.lines[1].glyph_start..l.lines[1].glyph_end];
+    assert!((last[1].origin.x - last[0].origin.x - a).abs() < 0.01);
+    // A Latin word inside a Japanese line keeps its letters together; the gaps around it share.
+    let t = area("一二ABC三四五六七八九十一二三", style(20.0), Rect::new(0.0, 0.0, 8.0 * a + 10.0, 400.0), Justify::JustifyLeft);
+    let l = layout(db(), &t);
+    let g = &l.glyphs[l.lines[0].glyph_start..l.lines[0].glyph_end];
+    let at = g.iter().position(|g| g.byte == "一二".len()).unwrap();
+    let solid =
+        |k: usize| (g[k + 1].origin.x - g[k].origin.x - layout(db(), &point(&"ABC"[k - at..=k - at], style(20.0))).glyphs[0].advance).abs() < 0.01;
+    assert!(solid(at) && solid(at + 1), "A–B–C set solid");
+    assert!(g[at].origin.x - g[at - 1].origin.x > a + 0.1, "二–A takes its share");
+}
+
+/// Leading measured from em box top to em box top (Japanese layout's model): area type's first line
+/// touches the frame's top; lines of one size are as far apart as with baseline-to-baseline leading;
+/// with sizes mixed, a line's leading is the space below it (baseline leading: above it).
+#[test]
+fn em_box_top_leading_hangs_lines_from_the_line_above() {
+    use vectorcraft_doc::{LeadingModel, TextRun};
+    let st = |size: f64| CharStyle { size, leading: Some(size * 1.5), ..style(size) };
+    let lay = |t: &TextObject, m: LeadingModel| {
+        let mut t = t.clone();
+        t.para.leading_model = m;
+        layout(db(), &t)
+    };
+    // The em box top: 0.88 em above the baseline (fonts without vertical metrics).
+    let top = |size: f64| 0.88 * size;
+    let one_size = area("一行目\n二行目\n三行目", st(20.0), Rect::new(0.0, 0.0, 300.0, 300.0), Justify::Left);
+    let (roman, em) = (lay(&one_size, LeadingModel::RomanBaseline), lay(&one_size, LeadingModel::EmBoxTop));
+    assert!((em.lines[0].baseline - top(20.0)).abs() < 0.01, "the first line's em box touches the top: {}", em.lines[0].baseline);
+    assert!((roman.lines[0].baseline - em.lines[0].baseline).abs() > 0.5, "baseline leading keeps Area Type Options' first baseline");
+    for l in [&roman, &em] {
+        assert!((l.lines[1].baseline - l.lines[0].baseline - 30.0).abs() < 0.01 && (l.lines[2].baseline - l.lines[1].baseline - 30.0).abs() < 0.01);
+    }
+    // 40 pt over 20 pt (leading 60 and 30).
+    let mut mixed = point("", st(40.0));
+    mixed.runs = vec![TextRun { text: "大\n".into(), style: st(40.0) }, TextRun { text: "小".into(), style: st(20.0) }];
+    let roman = lay(&mixed, LeadingModel::RomanBaseline);
+    assert!((roman.lines[1].baseline - roman.lines[0].baseline - 30.0).abs() < 0.01, "the small line's leading, above it");
+    let em = lay(&mixed, LeadingModel::EmBoxTop);
+    let want = -top(40.0) + 60.0 + top(20.0);
+    assert!(
+        (em.lines[1].baseline - em.lines[0].baseline - want).abs() < 0.01,
+        "the big line's leading, below it: {} vs {want}",
+        em.lines[1].baseline - em.lines[0].baseline
+    );
+}
+
+/// Character Alignment: a 20 pt character next to a 40 pt one lines its em box top, centre or
+/// bottom up with the big one's (the em box from 0.12 em below the baseline to 0.88 em above it,
+/// in fonts without vertical metrics), or stays on the baseline; in vertical type the same across
+/// the column (top → right).
+#[test]
+fn character_alignment_lines_small_characters_up_with_the_largest_em_box() {
+    use vectorcraft_doc::{CharAlign, TextRun};
+    for vertical_type in [false, true] {
+        let place = |a: CharAlign| {
+            let mut t = point("", style(40.0));
+            t.vertical = vertical_type;
+            t.runs = vec![
+                TextRun { text: "大".into(), style: style(40.0) },
+                TextRun { text: "小".into(), style: CharStyle { char_align: a, ..style(20.0) } },
+            ];
+            let l = layout(db(), &t);
+            // How far the small character's origin sits above the big one's (to the right, vertical).
+            let (big, small) = (l.glyphs[0].origin, l.glyphs[1].origin);
+            if vertical_type { small.x - big.x } else { big.y - small.y }
+        };
+        let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+        assert!(near(place(CharAlign::RomanBaseline), 0.0), "vertical {vertical_type}");
+        assert!(near(place(CharAlign::EmBoxTop), 0.88 * 20.0), "top: {}", place(CharAlign::EmBoxTop));
+        assert!(near(place(CharAlign::EmBoxCenter), 0.38 * 20.0), "centre: {}", place(CharAlign::EmBoxCenter));
+        assert!(near(place(CharAlign::EmBoxBottom), -0.12 * 20.0), "bottom: {}", place(CharAlign::EmBoxBottom));
+    }
+}
+
+/// Burasagari leaves Latin punctuation alone: in a measure of exactly "abcd", the full stop of
+/// "abcd. ef" doesn't hang with Standard or Forced (the line breaks as it does with None), and a
+/// Latin line ending in a full stop isn't shortened by Forced.
+#[test]
+fn burasagari_leaves_latin_commas_and_full_stops_inside_the_line() {
+    use vectorcraft_doc::Burasagari;
+    let measure = width(&point("abcd", style(20.0)));
+    let lay = |text: &str, b: Burasagari| {
+        let mut t = area(text, style(20.0), Rect::new(0.0, 0.0, measure + 0.01, 400.0), Justify::JustifyLeft);
+        t.para.burasagari = b;
+        layout(db(), &t).glyphs.iter().map(|g| (g.line, (g.origin.x * 100.0).round())).collect::<Vec<_>>()
+    };
+    for text in ["abcd. ef", "a b. efgh", "ab, cd, efgh"] {
+        let none = lay(text, Burasagari::None);
+        for b in [Burasagari::Standard, Burasagari::Forced] {
+            assert_eq!(lay(text, b), none, "{text} {b:?}");
+        }
+    }
 }

@@ -4,7 +4,7 @@ use egui::Ui;
 use serde_json::json;
 use vectorcraft_doc::{NodeKind, Unit};
 
-use super::{first_selected, pstate, set_pstate};
+use super::{corner_radius, first_selected, pstate, set_pstate};
 use crate::theme::Tokens;
 use crate::widgets::{self, dim_label, divider, section_header};
 use crate::{VectorcraftApp, icons};
@@ -16,10 +16,12 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
         return;
     };
     let n_sel = st.selection.len();
+    let anchors = crate::chrome::anchor_controls(app);
     let first = first_selected(app);
     let label = match (&first, n_sel) {
         (None, _) => tl!("Document").to_string(),
         (_, n) if n > 1 => crate::i18n::tn(n as u64, "{n} Object", "{n} Objects"),
+        (Some(n), _) if crate::panels::image_trace::is_trace(n) => tl!("Image Tracing").to_string(),
         (Some(n), _) => tl!(n.kind_label()).to_string(),
     };
     ui.label(egui::RichText::new(label).size(11.5).color(t.text_dim));
@@ -30,8 +32,13 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     transform_section(app, ui);
     divider(ui);
-    if n_sel == 1 && matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Image(_))) {
+    let is_image = n_sel == 1 && matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Image(_)));
+    if is_image {
         image_section(app, ui);
+        divider(ui);
+    }
+    if let Some(preset) = crate::panels::image_trace::selected_preset(app) {
+        trace_section(app, ui, &preset);
         divider(ui);
     }
     if matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Text(_))) {
@@ -78,6 +85,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
             }
         });
     }
+    if anchors != crate::chrome::AnchorControls::None {
+        divider(ui);
+        section_header(ui, tl!("Anchor Point"));
+        crate::chrome::anchor_buttons(app, ui, anchors);
+    }
     divider(ui);
     section_header(ui, tl!("Quick Actions"));
     let is_group = matches!(first.as_ref().map(|n| &n.kind), Some(NodeKind::Group { .. }));
@@ -96,6 +108,11 @@ pub fn show(app: &mut VectorcraftApp, ui: &mut Ui) {
     }
     if multi_color(app, ui.ctx()) {
         actions.push((tl!("Recolor"), "ui.recolorDialog"));
+    }
+    if is_image {
+        crate::panels::image_trace::trace_button(app, ui, ui.available_width());
+        actions.push((tl!("Crop Image"), "object.cropImage"));
+        actions.push((tl!("Mask"), "object.maskImage"));
     }
     actions.push((tl!("Offset Path"), "object.path.offsetPath"));
     actions.push((tl!("Simplify"), "object.path.simplify"));
@@ -126,29 +143,31 @@ fn image_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     ui.add_space(4.0);
     let w = (ui.available_width() - 6.0) / 2.0;
     let links = crate::panels::links::ID;
-    ui.horizontal(|ui| {
-        if linked {
-            if widgets::flat_button(ui, tl!("Embed"), w).clicked() {
-                app.run("links.embed", json!({ "ids": [id] })).ok();
-            }
-            if widgets::flat_button(ui, tl!("Edit Original"), w).clicked() {
-                crate::menus::invoke(app, "links.editOriginal", json!({ "id": id }));
-            }
-        } else {
-            if widgets::flat_button(ui, tl!("Unembed…"), w).clicked() {
-                crate::panels::links::unembed(app, id, &name);
-            }
-            if widgets::flat_button(ui, tl!("Image Trace"), w).clicked() {
-                app.ui.open_panel = Some("imageTrace".into());
-            }
-        }
-    });
+    ui.horizontal(|ui| crate::place::link_buttons(app, ui, id, linked, &name, Some(w)));
     ui.horizontal(|ui| {
         if app.services.pick_open.is_some() && widgets::flat_button(ui, tl!("Relink…"), w).clicked() {
             crate::panels::links::relink(app, vec![id]);
         }
         if widgets::flat_button(ui, tl!("Links"), w).clicked() {
             app.ui.open_panel = Some(links.into());
+        }
+    });
+}
+
+/// The one selected Image Trace object: its preset (choosing another traces it again with that
+/// one), Expand and Release.
+fn trace_section(app: &mut VectorcraftApp, ui: &mut Ui, preset: &str) {
+    section_header(ui, tl!("Image Trace"));
+    ui.horizontal(|ui| {
+        dim_label(ui, tl!("Preset:"));
+        crate::panels::image_trace::preset_dropdown(app, ui, preset, ui.available_width());
+    });
+    let w = (ui.available_width() - 6.0) / 2.0;
+    ui.horizontal(|ui| {
+        for (label, id) in [(tl!("Expand"), "imageTrace.expand"), (tl!("Release"), "imageTrace.release")] {
+            if widgets::flat_button(ui, label, w).clicked() {
+                app.run(id, json!({})).ok();
+            }
         }
     });
 }
@@ -188,6 +207,9 @@ fn document_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
             app.select_tool("artboard");
         }
     });
+    divider(ui);
+    section_header(ui, tl!("Appearance"));
+    fill_stroke_rows(app, ui);
     divider(ui);
     section_header(ui, tl!("Rulers & Grids"));
     ui.horizontal(|ui| {
@@ -294,7 +316,8 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         super::transform::constrain_link(app, ui);
     });
     ui.horizontal(|ui| {
-        icons::icon(ui, "rotate-ccw", 16.0, Tokens::get(ui.ctx()).icon);
+        let icon = icons::icon(ui, "rotate-ccw", 16.0, Tokens::get(ui.ctx()).icon);
+        crate::scrub::note_label(ui, icon.rect);
         // The bounding box's angle: a new value turns the selection to it.
         if let Some(a) = widgets::plain_field(ui, "rot", bx.angle, "°", 2, 70.0) {
             app.run("object.rotate", json!({"angle": a, "absolute": true})).ok();
@@ -312,10 +335,10 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
         && let NodeKind::Path { live: Some(live), .. } = &n.kind
     {
         match live {
-            vectorcraft_doc::LiveShape::Rectangle { radii, .. } => {
+            vectorcraft_doc::LiveShape::Rectangle { .. } => {
                 ui.horizontal(|ui| {
                     dim_label(ui, tl!("Corner Radius:"));
-                    if let Some(r) = widgets::num_field(ui, "radius", Some(radii[0]), units, 80.0) {
+                    if let Some(r) = widgets::num_field(ui, "radius", corner_radius(app, &n, live), units, 80.0) {
                         app.run("object.setLiveShape", json!({"radius": r})).ok();
                     }
                 });
@@ -336,23 +359,9 @@ pub fn transform_section(app: &mut VectorcraftApp, ui: &mut Ui) {
 fn appearance_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     let Some(n) = first_selected(app) else { return };
     section_header(ui, tl!("Appearance"));
-    let weight = super::stroke::shown_weight(app, super::current_stroke(app).as_ref(), &super::stroke_mixed(app, ui.ctx()));
-    for (label, is_fill) in [(tl!("Fill"), true), (tl!("Stroke"), false)] {
-        ui.horizontal(|ui| {
-            super::paint_chip(app, ui, !is_fill, 22.0, false);
-            ui.label(egui::RichText::new(label).size(12.0));
-            if !is_fill {
-                ui.add_space(8.0);
-                if let Some(w) = widgets::num_field(ui, "ap-w", weight, app.session.stroke_unit(), 70.0) {
-                    app.run("stroke.set", json!({"weight": w})).ok();
-                }
-                let more = widgets::icon_button(ui, "ellipsis", tl!("Stroke options"), false, 22.0);
-                super::stroke::popover(app, &more);
-            }
-        });
-    }
+    fill_stroke_rows(app, ui);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(tl!("Opacity")).size(12.0));
+        widgets::field_label(ui, egui::RichText::new(tl!("Opacity")).size(12.0));
         ui.add_space(8.0);
         if let Some(o) = widgets::plain_field(ui, "ap-op", n.opacity as f64 * 100.0, "%", 0, 64.0) {
             app.run("object.setProps", json!({"opacity": o.clamp(0.0, 100.0)})).ok();
@@ -371,6 +380,24 @@ fn appearance_section(app: &mut VectorcraftApp, ui: &mut Ui) {
     });
 }
 
+/// The Fill and Stroke rows, with the Control bar's widgets: the chips (a click opens the
+/// swatches, Shift-click the mixer), the Stroke link that opens the Stroke panel as a popover
+/// and the weight spinner with its presets. With nothing selected they set up the next object.
+fn fill_stroke_rows(app: &mut VectorcraftApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let weight = super::stroke::shown_weight(app, super::current_stroke(app).as_ref(), &super::stroke_mixed(app, ui.ctx()));
+    ui.horizontal(|ui| {
+        super::paint_chip(app, ui, false, 22.0, true);
+        ui.label(egui::RichText::new(tl!("Fill")).size(12.0).color(t.text));
+    });
+    ui.horizontal(|ui| {
+        super::paint_chip(app, ui, true, 22.0, true);
+        super::stroke::link(app, ui, tl!("Stroke"));
+        ui.add_space(8.0);
+        super::stroke::weight_field(app, ui, "ap-w", weight, 90.0);
+    });
+}
+
 pub fn type_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     let Some(n) = first_selected(app) else {
         dim_label(ui, tl!("Select a text object"));
@@ -382,26 +409,10 @@ pub fn type_sections(app: &mut VectorcraftApp, ui: &mut Ui) {
     };
     let s = tx.first_style();
     section_header(ui, tl!("Character"));
-    if let Some(f) = widgets::font_dropdown(ui, "font", &s.font_family, ui.available_width() - 4.0) {
-        app.run("text.setStyle", json!({ "font": f })).ok();
-    }
-    ui.horizontal(|ui| {
-        dim_label(ui, tl!("Size"));
-        let type_unit = app.session.type_unit();
-        if let Some(v) = widgets::num_field(ui, "fsize", Some(s.size), type_unit, 70.0) {
-            app.run("text.setStyle", json!({"size": v})).ok();
-        }
-        dim_label(ui, tl!("Leading"));
-        if let Some(v) = widgets::num_field(ui, "lead", Some(s.effective_leading()), type_unit, 70.0) {
-            app.run("text.setStyle", json!({"leading": v})).ok();
-        }
-    });
-    ui.horizontal(|ui| {
-        dim_label(ui, tl!("Tracking"));
-        if let Some(v) = widgets::plain_field(ui, "track", s.tracking, "", 0, 60.0) {
-            app.run("text.setStyle", json!({"tracking": v})).ok();
-        }
-    });
+    // The font, Font Size, Leading, Kerning and Tracking as in the Character panel.
+    let w = ui.available_width();
+    super::character::font_pickers(app, ui, &s, ("font", "font-style"), (w - 4.0, w - 4.0));
+    super::character::metrics_grid(app, ui, "props-char", &s, w, false);
     section_header(ui, tl!("Paragraph"));
     ui.horizontal(|ui| {
         for (icon, j) in [("align-start-vertical", "left"), ("align-center-vertical", "center"), ("align-end-vertical", "right")] {

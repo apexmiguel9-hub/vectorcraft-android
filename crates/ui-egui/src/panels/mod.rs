@@ -45,7 +45,7 @@ pub mod transparency;
 use egui::{Rect, Sense, Ui, vec2};
 use serde_json::{Value, json};
 use vectorcraft_color::{BlendMode, Color, Paint};
-use vectorcraft_doc::{Node, StrokeLayer};
+use vectorcraft_doc::{LiveShape, Node, StrokeLayer};
 use vectorcraft_engine::inspect::StrokeMixed;
 
 use crate::theme::Tokens;
@@ -55,6 +55,13 @@ use crate::{VectorcraftApp, icons};
 /// The first selected node (cloned), if any.
 pub fn first_selected(app: &VectorcraftApp) -> Option<Node> {
     first_node(app).cloned()
+}
+
+/// The radius the Live Corners of live rectangle `n` show in the panels: that of the corners the
+/// panels set (the Direct-Selected ones, else all four), blank when they differ.
+pub(crate) fn corner_radius(app: &VectorcraftApp, n: &Node, live: &LiveShape) -> Option<f64> {
+    let partial = app.session.active().and_then(|d| d.selection.partial(n.id));
+    live.corner_style(live.picked_corners(partial)).0
 }
 
 /// Number of selected objects.
@@ -106,8 +113,9 @@ pub fn show_icon_panel(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
     }
 }
 
-/// Items of a panel's (≡) menu. Unimplemented Illustrator items are listed disabled.
-pub fn panel_menu_items(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
+/// Items of a panel's (≡) menu. Unimplemented Illustrator items are listed disabled. False for a
+/// panel without items of its own.
+pub fn panel_menu_items(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) -> bool {
     match id {
         "swatches" => swatches::menu(app, ui),
         "color" => color::menu(app, ui),
@@ -145,10 +153,9 @@ pub fn panel_menu_items(app: &mut VectorcraftApp, ui: &mut Ui, id: &str) {
         links::ID => links::menu(app, ui),
         asset_export::ID => asset_export::menu(app, ui),
         css_properties::ID => css_properties::menu(app, ui),
-        _ => {
-            ui.add_enabled(false, egui::Button::new(tl!("No options")).frame(false));
-        }
+        _ => return false,
     }
+    true
 }
 
 /// The ≡ panel-menu button drawn into `rect` (the right end of a panel's title/tab strip).
@@ -160,7 +167,20 @@ pub fn panel_menu(app: &mut VectorcraftApp, ui: &mut Ui, id: &str, rect: Rect) {
     egui::Popup::menu(&resp).show(|ui| {
         crate::widgets::menu_scroll(ui, |ui| {
             ui.set_min_width(220.0);
-            panel_menu_items(app, ui, id);
+            if panel_menu_items(app, ui, id) {
+                ui.separator();
+            }
+            // The panel floats out of the dock or goes back in, as dragging its tab does.
+            let (label, cmd) = if crate::floating::group_of(&app.ui, id).is_some() {
+                (tl!("Dock Panel"), "window.panel.dock")
+            } else {
+                (tl!("Float Panel"), "window.panel.float")
+            };
+            if crate::widgets::menu_item(ui, label, true, false)
+                && let Err(e) = app.run(cmd, json!({ "panel": id }))
+            {
+                app.ui.status = e;
+            }
         });
     });
 }
@@ -465,6 +485,8 @@ mod tests_constrain;
 mod tests_css_properties;
 #[cfg(test)]
 mod tests_effectedit;
+#[cfg(test)]
+mod tests_fontsize;
 #[cfg(test)]
 mod tests_freeform;
 #[cfg(test)]

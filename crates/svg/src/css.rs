@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use vectorcraft_color::{BlendMode, Color, GradientKind, GradientPaint, Paint};
 use vectorcraft_doc::{AppearanceItem, CharStyle, Document, Justify, LineCap, LiveShape, Node, NodeId, NodeKind, StrokeAlign, StrokeLayer, TextKind};
 use vectorcraft_effects::RasterFx;
+use vectorcraft_geom::shapes::{self, CornerKind};
 use vectorcraft_geom::{Affine, PathData, Point, Rect};
 
 use crate::export::sanitize_id;
@@ -545,7 +546,7 @@ impl Rules<'_> {
             art.props.push(("line-height", self.len(l)));
         }
         let align = match t.para.justify {
-            Justify::Left => None,
+            Justify::Auto | Justify::Left => None,
             Justify::Center => Some("center"),
             Justify::Right => Some("right"),
             Justify::JustifyLeft | Justify::JustifyCenter | Justify::JustifyRight | Justify::JustifyAll => Some("justify"),
@@ -599,16 +600,21 @@ fn corners(path: &PathData, live: Option<&LiveShape>) -> Option<Corners> {
         let [_, b, c, _, _, _] = xf.as_coeffs();
         b.abs() < 1e-9 && c.abs() < 1e-9
     };
-    match live {
-        Some(LiveShape::Rectangle { radii, xf, .. }) if upright(xf) => {
-            let [a, _, _, d, _, _] = xf.as_coeffs();
-            let s = (a * d).abs().sqrt();
+    // Sizes and radii in document units.
+    match live.map(LiveShape::folded).as_ref() {
+        // CSS rounds corners only: an inverted round or chamfered corner has no border radius.
+        Some(LiveShape::Rectangle { w, h, radii, kinds, xf })
+            if upright(xf) && radii.iter().zip(kinds).all(|(r, k)| *r <= 0.0 || *k == CornerKind::Round) =>
+        {
+            // The radii as drawn, none past half the shorter side (CSS draws one further when its
+            // neighbours leave room).
+            let radii = radii.map(|r| shapes::fitted_corner_radius(*w, *h, r));
             if radii.iter().all(|r| *r <= 0.0) {
                 Some(Corners::Square)
             } else if radii.iter().all(|r| (r - radii[0]).abs() < 1e-9) {
-                Some(Corners::Round(vec![radii[0] * s]))
+                Some(Corners::Round(vec![radii[0]]))
             } else {
-                Some(Corners::Round(radii.iter().map(|r| r.max(0.0) * s).collect()))
+                Some(Corners::Round(radii.to_vec()))
             }
         }
         Some(LiveShape::Ellipse { pie, xf, .. }) if upright(xf) => {

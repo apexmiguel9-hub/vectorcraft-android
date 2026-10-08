@@ -11,7 +11,7 @@ use vectorcraft_engine::cmd::fileio::SaveMode;
 
 use crate::VectorcraftApp;
 use crate::io;
-use crate::state::{DockTab, ICON_PANELS, next_zoom};
+use crate::state::{DockTab, next_zoom};
 use crate::theme::{self, Brightness, Tokens};
 use crate::widgets;
 
@@ -54,9 +54,14 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "app.language",
         "Interface Language",
         "",
-        "{lang: auto|<code>} the interface language, persisted as the `interfaceLanguage` preference (`auto` follows the system locale; codes: prefs.list › interfaceLanguage, e.g. en, ja, cs, zh-hant)",
+        "{lang: auto|<code>} the interface language, persisted as the `interfaceLanguage` preference (`auto` follows the system locale; codes: prefs.list › interfaceLanguage, e.g. en, ja, cs, es, zh-hant)",
     ),
-    ("file.open", "Open…", "Cmd+O", "{path?}"),
+    (
+        "file.open",
+        "Open…",
+        "Cmd+O",
+        "{path?} → with a path, document.open's result {index, title, format, warnings, …} (null when a dialog asks first or a library loads)",
+    ),
     (
         "file.save",
         "Save",
@@ -89,6 +94,31 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("view.goto8", "Saved View 8", "", "{} go to the 8. saved view"),
     ("view.goto9", "Saved View 9", "", "{} go to the 9. saved view"),
     ("view.goto10", "Saved View 10", "", "{} go to the 10. saved view"),
+    ("select.recall1", "Saved Selection 1", "", "{} select the 1. saved selection"),
+    ("select.recall2", "Saved Selection 2", "", "{} select the 2. saved selection"),
+    ("select.recall3", "Saved Selection 3", "", "{} select the 3. saved selection"),
+    ("select.recall4", "Saved Selection 4", "", "{} select the 4. saved selection"),
+    ("select.recall5", "Saved Selection 5", "", "{} select the 5. saved selection"),
+    ("select.recall6", "Saved Selection 6", "", "{} select the 6. saved selection"),
+    ("select.recall7", "Saved Selection 7", "", "{} select the 7. saved selection"),
+    ("select.recall8", "Saved Selection 8", "", "{} select the 8. saved selection"),
+    ("select.recall9", "Saved Selection 9", "", "{} select the 9. saved selection"),
+    ("select.recall10", "Saved Selection 10", "", "{} select the 10. saved selection"),
+    ("select.recall11", "Saved Selection 11", "", "{} select the 11. saved selection"),
+    ("select.recall12", "Saved Selection 12", "", "{} select the 12. saved selection"),
+    ("select.recall13", "Saved Selection 13", "", "{} select the 13. saved selection"),
+    ("select.recall14", "Saved Selection 14", "", "{} select the 14. saved selection"),
+    ("select.recall15", "Saved Selection 15", "", "{} select the 15. saved selection"),
+    ("select.recall16", "Saved Selection 16", "", "{} select the 16. saved selection"),
+    ("select.recall17", "Saved Selection 17", "", "{} select the 17. saved selection"),
+    ("select.recall18", "Saved Selection 18", "", "{} select the 18. saved selection"),
+    ("select.recall19", "Saved Selection 19", "", "{} select the 19. saved selection"),
+    ("select.recall20", "Saved Selection 20", "", "{} select the 20. saved selection"),
+    ("select.recall21", "Saved Selection 21", "", "{} select the 21. saved selection"),
+    ("select.recall22", "Saved Selection 22", "", "{} select the 22. saved selection"),
+    ("select.recall23", "Saved Selection 23", "", "{} select the 23. saved selection"),
+    ("select.recall24", "Saved Selection 24", "", "{} select the 24. saved selection"),
+    ("select.recall25", "Saved Selection 25", "", "{} select the 25. saved selection"),
     ("type.recentFont1", "Recent Font 1", "", "{} apply the 1. most recently used font"),
     ("type.recentFont2", "Recent Font 2", "", "{} apply the 2. most recently used font"),
     ("type.recentFont3", "Recent Font 3", "", "{} apply the 3. most recently used font"),
@@ -99,6 +129,11 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("type.recentFont8", "Recent Font 8", "", "{} apply the 8. most recently used font"),
     ("type.recentFont9", "Recent Font 9", "", "{} apply the 9. most recently used font"),
     ("type.recentFont10", "Recent Font 10", "", "{} apply the 10. most recently used font"),
+    ("type.recentFont11", "Recent Font 11", "", "{} apply the 11. most recently used font"),
+    ("type.recentFont12", "Recent Font 12", "", "{} apply the 12. most recently used font"),
+    ("type.recentFont13", "Recent Font 13", "", "{} apply the 13. most recently used font"),
+    ("type.recentFont14", "Recent Font 14", "", "{} apply the 14. most recently used font"),
+    ("type.recentFont15", "Recent Font 15", "", "{} apply the 15. most recently used font"),
     ("file.clearRecent", "Clear Recent Files", "", "{}"),
     ("type.findFont", "Find Font…", "", "{} open the Find Font dialog (engine: text.fonts / text.replaceFont / select.font)"),
     ("file.recentFiles", "Recent Files", "", "{} → [path…] most recent first"),
@@ -167,11 +202,41 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
     ("view.rotateReset", "Reset Rotate View", "Cmd+Shift+1", "{}"),
     ("window.control", "Control", "", "{}"),
     ("window.toolbar", "Tools", "", "{}"),
-    ("window.toolbarColumns", "Toolbar: Single/Double Column", "", "{}"),
+    (
+        "window.toolbarColumns",
+        "Toolbar: Single/Double Column",
+        "",
+        "{double?: bool} show the toolbar's tools in two columns (true), one (false) or toggle (omitted), as the double arrow at the top of the toolbar does; returns the new state",
+    ),
     ("window.toolbarAdvanced", "Toolbar: Advanced / Basic", "", "{}"),
+    (
+        "window.floatTools",
+        "Float Tool Group",
+        "",
+        "{tool: id, floating?: bool} float the toolbar group holding `tool` (in the current Basic or Advanced layout) as its own strip of tool buttons (true), put it back in the toolbar (false) or toggle (omitted), as dragging or clicking a flyout's tear-off bar and the strip's × do; returns the new state",
+    ),
     ("window.taskBar", "Contextual Task Bar", "", "{}"),
+    (
+        "window.taskBar.pin",
+        "Pin Bar Position",
+        "",
+        "{pinned?: bool} keep the Contextual Task Bar where it is instead of following the selection (true), let it follow the selection again from where it is (false) or toggle (omitted), as the bar's More Options menu does; returns the new state",
+    ),
+    ("window.taskBar.reset", "Reset Bar Position", "", "{} unpin the Contextual Task Bar and put it back under the selection"),
     ("window.dock", "Panels", "Tab", "{} show/hide all panels"),
-    ("window.panel", "Show Panel", "", "{panel: id} e.g. layers, swatches, stroke"),
+    ("window.panel", "Show Panel", "", "{panel: id} e.g. layers, swatches, stroke (case-insensitive; display labels like \"Layers\" work too)"),
+    (
+        "window.panel.float",
+        "Float Panel",
+        "",
+        "{panel: id or \"tools\", x?, y?, onto?: id, group?: bool} float a panel out of the dock (or out of its floating group) as its own floating group with its top-left corner at x, y in window points (default: cascaded), as dragging its tab out of the dock does; `onto` stacks it with the floating group holding that panel instead; `group` takes its whole group (its floating group, or the Properties | Layers | Libraries tabs left in the dock); a panel alone in its group is moved. \"tools\" floats the Tools panel. Returns {panel, floating, group, pos}",
+    ),
+    (
+        "window.panel.dock",
+        "Dock Panel",
+        "",
+        "{panel: id or \"tools\", group?: bool} put a floating panel (with `group`, its whole group) back in the dock, as dropping it on the dock or its group's × does: Properties, Layers and Libraries in the tabbed group, the other panels in the icon column; \"tools\" docks the Tools panel at the window's left edge",
+    ),
     (
         "window.collapseDock",
         "Collapse Panels to Icons",
@@ -251,7 +316,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "tool.options",
         "Tool Options…",
         "",
-        "{tool: id} what double-clicking a tool button opens: hand → fits the artboard in the window (view.fitArtboard), zoom → 100% (view.actualSize), rotate|scale|reflect|shear → that Object › Transform dialog (dialog `rotate`, `scale`, `reflect` or `shear`; error `nothing selected` without a selection), gradient → the Gradient panel (window.panel), eyedropper → Eyedropper Options (dialog `eyedropperOptions`, fields sampleSize, pickUp, apply; OK runs eyedropper.setOptions), printTiling → resets the print tiling (print.tiling.set {reset: true}), warp|twirl|pucker|bloat|scallop|crystallize|wrinkle → that tool's Tool Options (dialog `liquifyOptions`, fields tool, width, height, angle, intensity %, usePressure, detail, simplify, simplifyOn, rate, complexity, horizontal %, vertical %, affectAnchors, affectIn, affectOut, showBrush; OK runs tool.setOption {tool, values})",
+        "{tool: id} what double-clicking a tool button opens: hand → fits the artboard in the window (view.fitArtboard), zoom → 100% (view.actualSize), rotate|scale|reflect|shear → that Object › Transform dialog (dialog `rotate`, `scale`, `reflect` or `shear`; error `nothing selected` without a selection), selection|directSelection|groupSelection → the Move dialog (dialog `move`; the same error), gradient → the Gradient panel (window.panel), eyedropper → Eyedropper Options (dialog `eyedropperOptions`, fields sampleSize, pickUp, apply; OK runs eyedropper.setOptions), printTiling → resets the print tiling (print.tiling.set {reset: true}), warp|twirl|pucker|bloat|scallop|crystallize|wrinkle → that tool's Tool Options (dialog `liquifyOptions`, fields tool, width, height, angle, intensity %, usePressure, detail, simplify, simplifyOn, rate, complexity, horizontal %, vertical %, affectAnchors, affectIn, affectOut, showBrush; OK runs tool.setOption {tool, values}), pencil|paintbrush|smooth|blobBrush|eraser → that tool's Tool Options (dialog `freehandOptions`, fields tool and the options the tool keeps: fidelity (pt), fill, closeWithin and editWithin (px, 0 is off), size (pt); OK runs tool.setOption {tool, values})",
     ),
     (
         "ui.colorGuideOptions",
@@ -304,6 +369,30 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "Merge Graphic Styles…",
         "",
         "{names: [two or more styles]} open Graphic Style Options (dialog `graphicStyleOptions`, field `name`) to name the style OK merges from them (graphicStyle.merge)",
+    ),
+    (
+        "ui.layerOptions",
+        "Options for Selection…",
+        "",
+        "{ids?|id?} open Layer Options for Layers panel rows (default: the highlighted rows, else the current layer), filled in from the first: dialog `layerOptions`, fields name, color (a preset name such as \"Light Blue\" or #rrggbb), template, locked, visible, printable, preview, dimImages (bool), dimPercent (0–100); an object's row has name, visible and locked. OK runs layer.setProps (one undo step)",
+    ),
+    (
+        "ui.newLayer",
+        "New Layer Options…",
+        "",
+        "{sublayer?: bool} open Layer Options for a new layer (or a sublayer of the current layer), named and coloured as it would be: dialog `layerOptions` with mode new|newSublayer; OK runs layer.new or layer.newSublayer with the fields",
+    ),
+    (
+        "ui.layersPanelOptions",
+        "Panel Options…",
+        "",
+        "{} open the Layers panel's Panel Options: dialog `layersPanelOptions`, fields layersOnly, rowSize (small|medium|large|other), otherSize (12–100 pt), thumbLayers, thumbGroups, thumbObjects; OK applies them (kept with the UI state)",
+    ),
+    (
+        "ui.layersExpand",
+        "Expand Layers Panel Rows",
+        "",
+        "{ids?: [id…] (default: every row that holds others), open?: bool (default true)} open or close rows of the Layers panel, as clicking their triangles does → {count}",
     ),
     (
         "ui.tileEdgeColor",
@@ -391,6 +480,12 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "Width Point Edit…",
         "",
         "{id, index} open Width Point Edit for width point `index` of path `id` (dialog `widthPoint`: side1, side2 (pt), linked, adjustAdjoining; double-clicking a width point with the Width tool opens it too): OK runs stroke.widthPoint.set, discard: true (the Delete button) stroke.widthPoint.remove",
+    ),
+    (
+        "ui.corners",
+        "Corners…",
+        "",
+        "{id?, corners?: [0..3…]} open Corners for live rectangle `id` (default: the selected one) and its corners (0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left; default: the Direct-Selected corners, else all four) (dialog `corners`: kind (round|invertedRound|chamfer), radius (pt); double-clicking a corner widget opens it too): OK runs object.setLiveShape",
     ),
     (
         "ui.colorGuideLimit",
@@ -687,6 +782,22 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+/// Canonical panel id for `window.panel`: a dock tab's or an icon panel's id or display label,
+/// matched case-insensitively (`"Layers"`, `"swatches"`, `"Color Guide"`).
+pub(crate) fn normalize_panel(input: &str) -> Option<&'static str> {
+    let name = input.trim();
+    crate::state::all_panels().find(|(id, label)| name.eq_ignore_ascii_case(id) || name.eq_ignore_ascii_case(label)).map(|(id, _)| id)
+}
+
+/// An optional `{key?: bool}` param: none when it is omitted or null (the commands then toggle).
+pub(crate) fn opt_bool(p: &Value, key: &str) -> Result<Option<bool>, String> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(format!("`{key}` must be true or false")),
+    }
+}
+
 /// Handle a UI command. `None` = not a UI command (the engine handles it).
 pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
     if id == "app.language" {
@@ -704,7 +815,10 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
     if let Some(r) = crate::panels::character::intercept_text_command(app, id) {
         return Some(r);
     }
-    if let Some(r) = crate::shortcut_editor::run_command(app, id, p).or_else(|| crate::workspaces::run_command(app, id, p)) {
+    if let Some(r) = crate::shortcut_editor::run_command(app, id, p)
+        .or_else(|| crate::workspaces::run_command(app, id, p))
+        .or_else(|| crate::floating::command(app, id, p))
+    {
         return Some(r);
     }
     let s = |k: &str| p.get(k).and_then(Value::as_str).map(str::to_string);
@@ -722,7 +836,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             Ok(Value::Null)
         }
         "file.open" => match s("path") {
-            Some(path) => io::open_path(app, &path).map(|_| Value::Null),
+            Some(path) => io::open_path(app, &path),
             None => io::open_dialog(app).map(|_| Value::Null),
         },
         // Saves write through the app (save panel, download); with no path known the panel and the
@@ -739,7 +853,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         "file.revert" if p.get("confirmed").and_then(Value::as_bool) != Some(true) => io::ask_revert(app),
         "file.reveal" => io::reveal(app),
         id if id.starts_with("file.openRecent") => match recent_slot(app, id).cloned() {
-            Some(path) => io::open_path(app, &path).map(|_| Value::Null),
+            Some(path) => io::open_path(app, &path),
             None => Err("no such recent file".into()),
         },
         "type.findFont" => {
@@ -809,6 +923,10 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
                 _ => Err("no such view".into()),
             }
         }
+        id if saved_selection_slot(id).is_some() => match saved_selection_name(app, id) {
+            Some(name) => app.run("select.recall", json!({ "name": name })),
+            None => Err("no such saved selection".into()),
+        },
         "view.snapToPixel" => flag(&mut app.ui.view.snap_to_pixel),
         "view.textThreads" => flag(&mut app.ui.view.text_threads),
         "type.hiddenCharacters" => flag(&mut app.ui.view.hidden_chars),
@@ -827,7 +945,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         },
         id if id.starts_with("type.recentFont") => {
             let n: usize = id["type.recentFont".len()..].parse().unwrap_or(0);
-            match n.checked_sub(1).and_then(|i| app.ui.recent_fonts.get(i)).cloned() {
+            match n.checked_sub(1).and_then(|i| app.recent_fonts().get(i)).cloned() {
                 Some(font) => app.run("text.setStyle", json!({ "font": font })),
                 None => Err("no such recent font".into()),
             }
@@ -836,16 +954,29 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         "view.artboards" => flag(&mut app.ui.view.artboards),
         "view.rulers" => flag(&mut app.ui.view.rulers),
         "view.boundingBox" => flag(&mut app.ui.view.bounding_box),
-        "view.guides" => flag(&mut app.ui.view.guides),
+        "view.guides" => {
+            let r = flag(&mut app.ui.view.guides);
+            // Hidden guides can't stay selected (selected, they are all that is).
+            if !app.ui.view.guides && app.session.active().is_some_and(|d| !d.selection.guides.is_empty()) {
+                // Deselecting a document that is open can't fail.
+                let _ = app.run("select.none", json!({}));
+            }
+            r
+        }
         "view.smartGuides" => flag(&mut app.ui.view.smart_guides),
         "view.grid" => flag(&mut app.ui.view.grid),
         "view.snapToGrid" => flag(&mut app.ui.view.snap_to_grid),
         "view.snapToPoint" => flag(&mut app.ui.view.snap_to_point),
         "view.zoomIn" | "view.zoomOut" => {
             let up = id == "view.zoomIn";
+            // Selection & Anchor Display › Zoom to Selection: the selection comes to the middle.
+            let focus = if app.session.prefs.zoom_to_selection { app.selection_box().map(|b| b.center()) } else { None };
             match app.view_mut() {
                 Some(v) => {
                     v.zoom = next_zoom(v.zoom, up);
+                    if let Some(c) = focus {
+                        v.center = c;
+                    }
                     Ok(json!({"zoom": v.zoom * 100.0}))
                 }
                 None => Err("no document".into()),
@@ -879,7 +1010,10 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         "view.screenMode" => {
             app.ui.screen_mode = match p.get("mode").and_then(Value::as_u64) {
                 Some(m) => m.min(3) as u8,
-                None => (app.ui.screen_mode + 1) % 3,
+                // F cycles the three screen modes; from Presentation Mode (not in the cycle) it
+                // goes back to Normal.
+                None if app.ui.screen_mode >= 2 => 0,
+                None => app.ui.screen_mode + 1,
             };
             Ok(json!(app.ui.screen_mode))
         }
@@ -891,9 +1025,38 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
         }
         "window.control" => flag(&mut app.ui.control_bar),
         "window.toolbar" => flag(&mut app.ui.toolbar),
-        "window.toolbarColumns" => flag(&mut app.ui.toolbar_double),
+        "window.toolbarColumns" => opt_bool(p, "double").map(|on| {
+            let on = on.unwrap_or(!app.ui.toolbar_double);
+            app.ui.toolbar_double = on;
+            json!(on)
+        }),
         "window.toolbarAdvanced" => flag(&mut app.ui.toolbar_advanced),
+        "window.floatTools" => {
+            let floating = match opt_bool(p, "floating") {
+                Ok(on) => on,
+                Err(e) => return Some(Err(e)),
+            };
+            let Some(tool) = s("tool") else { return Some(Err("tool (a tool id) is required".into())) };
+            crate::toolbar::float_group(app, &tool, floating).map(Value::Bool)
+        }
         "window.taskBar" => flag(&mut app.ui.task_bar),
+        "window.taskBar.pin" => {
+            let place = &mut app.ui.task_bar_place;
+            opt_bool(p, "pinned").map(|pinned| {
+                let pinned = pinned.unwrap_or(!place.pinned);
+                // Pinning holds the bar where it shows; unpinning lets it follow the selection from
+                // there (the bar turns its pinned spot into an offset when it is next drawn).
+                if pinned && !place.pinned {
+                    place.pin_at = place.shown_at;
+                }
+                place.pinned = pinned;
+                json!(pinned)
+            })
+        }
+        "window.taskBar.reset" => {
+            app.ui.task_bar_place = Default::default();
+            Ok(Value::Null)
+        }
         "window.dock" => {
             let on = !(app.ui.dock && app.ui.toolbar);
             app.ui.dock = on;
@@ -901,35 +1064,44 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             app.ui.control_bar = on;
             Ok(json!(on))
         }
-        "window.collapseDock" => {
-            let collapsed = match p.get("collapsed") {
-                None | Some(Value::Null) => !app.ui.dock_collapsed,
-                Some(Value::Bool(b)) => *b,
-                Some(_) => return Some(Err("collapsed must be true or false".into())),
-            };
+        "window.collapseDock" => opt_bool(p, "collapsed").map(|collapsed| {
+            let collapsed = collapsed.unwrap_or(!app.ui.dock_collapsed);
             crate::dock::set_collapsed(app, collapsed);
-            Ok(json!(collapsed))
-        }
+            json!(collapsed)
+        }),
         "window.panel" => {
-            let panel = s("panel").unwrap_or_default();
-            match (panel.as_str(), DockTab::from_id(&panel)) {
+            let raw = s("panel").unwrap_or_default();
+            // Canonical id (case-insensitive; display labels work too), then the
+            // dock tab it names, if any.
+            let canonical = normalize_panel(&raw);
+            // A floating panel shows its tab in its group.
+            if let Some(p) = canonical
+                && let Some(g) = crate::floating::group_of(&app.ui, p).and_then(|i| app.ui.floating_panels.get_mut(i))
+            {
+                g.active = g.panels.iter().position(|q| q == p).unwrap_or(g.active);
+                let out = json!({ "floating": g.panels });
+                app.ui.dock = true;
+                return Some(Ok(out));
+            }
+            let tab = canonical.and_then(DockTab::from_id);
+            match (canonical, tab) {
                 // A collapsed dock pops the panel out of its icon, like the icon panels.
-                (p, Some(tab)) if app.ui.dock_collapsed => {
+                (Some(p), Some(tab)) if app.ui.dock_collapsed => {
                     app.ui.dock_tab = tab;
                     app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(p) { None } else { Some(p.to_string()) };
                     app.ui.dock = true;
                     Ok(json!({"open": app.ui.open_panel}))
                 }
-                (_, Some(tab)) => {
+                (Some(_), Some(tab)) => {
                     app.ui.dock_tab = tab;
                     Ok(Value::Null)
                 }
-                (p, None) if ICON_PANELS.iter().any(|(id, _, _)| *id == p) => {
+                (Some(p), None) => {
                     app.ui.open_panel = if app.ui.open_panel.as_deref() == Some(p) { None } else { Some(p.to_string()) };
                     app.ui.dock = true;
                     Ok(json!({"open": app.ui.open_panel}))
                 }
-                (other, None) => Err(format!("unknown panel `{other}`")),
+                (None, _) => Err(format!("unknown panel `{raw}`")),
             }
         }
         "window.brightness" => match s("brightness").as_deref().and_then(Brightness::parse) {
@@ -1022,6 +1194,10 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             crate::dialogs::graphic_style_options::open_merge(app, names.unwrap_or_default())
         }
         "ui.tileEdgeColor" => crate::dialogs::tile_edge_color::open(app),
+        "ui.layerOptions" => crate::dialogs::layer_options::open(app, p),
+        "ui.newLayer" => crate::dialogs::layer_options::open_new(app, p),
+        "ui.layersPanelOptions" => crate::dialogs::layers_panel_options::open(app),
+        "ui.layersExpand" => crate::panels::layers::expand(app, p),
         "ui.flattenTransparencyDialog" => {
             crate::dialogs::flatten::open(app);
             Ok(Value::Null)
@@ -1055,6 +1231,7 @@ pub fn run_ui_command(app: &mut VectorcraftApp, id: &str, p: &Value) -> Option<R
             },
         },
         "ui.widthPointEdit" => crate::dialogs::width_point::open(app, p),
+        "ui.corners" => crate::dialogs::corners::open(app, p),
         "ui.colorGuideLimit" => crate::panels::color_guide::set_limit(app, p),
         "ui.savePdfDialog" => crate::dialogs::open_save_pdf(app, p),
         "file.exportAs" if s("path").is_none() => {
@@ -1206,12 +1383,20 @@ pub fn checked(app: &VectorcraftApp, id: &str, p: &Value) -> Option<bool> {
         "window.control" => app.ui.control_bar,
         "window.toolbar" => app.ui.toolbar,
         "window.toolbarAdvanced" => app.ui.toolbar_advanced,
+        "window.toolbarColumns" => app.ui.toolbar_double,
+        "window.floatTools" => {
+            let tool = p.get("tool").and_then(Value::as_str).unwrap_or("");
+            app.ui.floating_flyouts.iter().any(|f| f.tools.iter().any(|id| id == tool))
+        }
         "window.taskBar" => app.ui.task_bar,
+        "window.taskBar.pin" => app.ui.task_bar_place.pinned,
         "window.panel" => {
             let panel = p.get("panel").and_then(Value::as_str).unwrap_or("");
-            match DockTab::from_id(panel) {
-                Some(tab) if !app.ui.dock_collapsed => app.ui.dock_tab == tab,
-                _ => app.ui.open_panel.as_deref() == Some(panel),
+            let canonical = normalize_panel(panel);
+            match canonical.and_then(DockTab::from_id) {
+                _ if canonical.is_some_and(|id| crate::floating::group_of(&app.ui, id).is_some()) => true,
+                Some(tab) if !app.ui.dock_collapsed => crate::floating::shown_tab(&app.ui) == Some(tab),
+                _ => canonical.is_some_and(|id| app.ui.open_panel.as_deref() == Some(id)),
             }
         }
         "window.collapseDock" => app.ui.dock_collapsed,
@@ -1254,12 +1439,13 @@ pub fn dynamic_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
         },
         id if id.starts_with("type.recentFont") => {
             let n: usize = id["type.recentFont".len()..].parse().unwrap_or(0);
-            n.checked_sub(1).and_then(|i| app.ui.recent_fonts.get(i)).cloned().unwrap_or_else(|| "—".into())
+            n.checked_sub(1).and_then(|i| app.recent_fonts().get(i)).cloned().unwrap_or_else(|| "—".into())
         }
         id if id.starts_with("view.goto") => {
             let n: usize = id["view.goto".len()..].parse().unwrap_or(0);
             app.session.active().and_then(|d| n.checked_sub(1).and_then(|i| d.doc.views.get(i)).map(|v| v.name.clone())).unwrap_or_else(|| "—".into())
         }
+        id if saved_selection_slot(id).is_some() => saved_selection_name(app, id).unwrap_or_else(|| "—".into()),
         "view.artboards" => if v.artboards { "Hide Artboards" } else { "Show Artboards" }.into(),
         "view.rulers" => if v.rulers { "Hide Rulers" } else { "Show Rulers" }.into(),
         "view.boundingBox" => if v.bounding_box { "Hide Bounding Box" } else { "Show Bounding Box" }.into(),
@@ -1317,6 +1503,7 @@ fn shows_a_name(id: &str, label: &str) -> bool {
         crate::dialogs::perspective_presets::SLOT,
     ];
     SLOTS.iter().any(|s| id.starts_with(s))
+        || saved_selection_slot(id).is_some()
         || matches!(id, "text.setStyle" | "plugin.dialog")
         || (id == "window.workspace" && !crate::workspaces::is_builtin(label))
         || (matches!(id, "effect.apply" | "effect.dialog") && vectorcraft_effects::plugin_effects().iter().any(|e| e.label == label))
@@ -1360,6 +1547,7 @@ pub fn display_label(app: &VectorcraftApp, id: &str, label: &str) -> String {
 /// User Defined swatch and graphic style libraries).
 fn hidden_when_disabled(id: &str) -> bool {
     id.starts_with("view.goto")
+        || saved_selection_slot(id).is_some()
         || id.starts_with("file.openRecent")
         || id.starts_with(crate::panels::swatches::USER_SLOT)
         || id.starts_with(crate::panels::graphic_styles::USER_SLOT)
@@ -1411,6 +1599,12 @@ const RECENT_IDS: [&str; io::MAX_RECENT_FILES] = [
     "file.openRecent30",
 ];
 
+/// The saved selection a `select.recallN` slot names (none past the document's last).
+fn saved_selection_name(app: &VectorcraftApp, id: &str) -> Option<String> {
+    let n = saved_selection_slot(id)?.checked_sub(1)?;
+    app.session.active()?.doc.saved_selections.get(n).map(|x| x.name.clone())
+}
+
 /// The recent file a `file.openRecentN` slot names (none past the preference's count).
 fn recent_slot<'a>(app: &'a VectorcraftApp, id: &str) -> Option<&'a String> {
     let n: usize = id.strip_prefix("file.openRecent")?.parse().ok()?;
@@ -1430,6 +1624,7 @@ pub fn listed_slots(app: &VectorcraftApp) -> usize {
     let user = |libs: Vec<swatchlib::LibraryInfo>| libs.iter().filter(|l| l.category == "user").count().min(10);
     let views = app.session.active().map_or(0, |d| d.doc.views.len().min(10));
     views
+        + app.session.active().map_or(0, |d| d.doc.saved_selections.len().min(SAVED_SELECTION_IDS.len()))
         + io::recent_files(app).len().min(RECENT_IDS.len())
         + user(swatchlib::libraries(&app.session))
         + user(stylelib::libraries(&app.session))
@@ -1467,8 +1662,42 @@ const PERSPECTIVE_SLOTS: [[&str; crate::dialogs::perspective_presets::SLOTS]; 3]
     ],
 ];
 
-/// Type → Recent Fonts slots.
-const RECENT_FONT_IDS: [&str; 10] = [
+/// Select → saved selections: the n-th saved selection of the active document.
+const SAVED_SELECTION_IDS: [&str; vectorcraft_engine::doc::SavedSelection::MAX] = [
+    "select.recall1",
+    "select.recall2",
+    "select.recall3",
+    "select.recall4",
+    "select.recall5",
+    "select.recall6",
+    "select.recall7",
+    "select.recall8",
+    "select.recall9",
+    "select.recall10",
+    "select.recall11",
+    "select.recall12",
+    "select.recall13",
+    "select.recall14",
+    "select.recall15",
+    "select.recall16",
+    "select.recall17",
+    "select.recall18",
+    "select.recall19",
+    "select.recall20",
+    "select.recall21",
+    "select.recall22",
+    "select.recall23",
+    "select.recall24",
+    "select.recall25",
+];
+
+/// The 1-based slot a `select.recallN` id stands for.
+fn saved_selection_slot(id: &str) -> Option<usize> {
+    id.strip_prefix("select.recall")?.parse().ok()
+}
+
+/// Type → Recent Fonts slots (Preferences › Type › Number of Recent Fonts shows up to 15).
+const RECENT_FONT_IDS: [&str; crate::MAX_RECENT_FONTS] = [
     "type.recentFont1",
     "type.recentFont2",
     "type.recentFont3",
@@ -1479,6 +1708,11 @@ const RECENT_FONT_IDS: [&str; 10] = [
     "type.recentFont8",
     "type.recentFont9",
     "type.recentFont10",
+    "type.recentFont11",
+    "type.recentFont12",
+    "type.recentFont13",
+    "type.recentFont14",
+    "type.recentFont15",
 ];
 
 /// Effective shortcut of a command: the user's override (Edit → Keyboard Shortcuts) or the default.
@@ -1524,8 +1758,9 @@ pub fn enabled(app: &VectorcraftApp, id: &str) -> bool {
         id if id.starts_with("file.openRecent") => recent_slot(app, id).is_some(),
         "file.clearRecent" => !app.ui.recent_files.is_empty(),
         id if id.starts_with("type.recentFont") => {
-            id["type.recentFont".len()..].parse::<usize>().is_ok_and(|n| n >= 1 && n <= app.ui.recent_fonts.len()) && app.session.active().is_some()
+            id["type.recentFont".len()..].parse::<usize>().is_ok_and(|n| n >= 1 && n <= app.recent_fonts().len()) && app.session.active().is_some()
         }
+        id if saved_selection_slot(id).is_some() => saved_selection_name(app, id).is_some(),
         id if id.starts_with("view.goto") => {
             id["view.goto".len()..].parse::<usize>().is_ok_and(|n| n >= 1 && app.session.active().is_some_and(|d| n <= d.doc.views.len()))
         }
@@ -1785,7 +2020,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                         Sep,
                         c("Simplify…", "object.path.simplify"),
                         c("Add Anchor Points", "object.path.addAnchorPoints"),
-                        c("Remove Anchor Points", "path.deleteAnchors"),
+                        c("Remove Anchor Points", "path.removeAnchors"),
                         c("Divide Objects Below", "object.path.divideObjectsBelow"),
                         c("Split Into Grid…", "object.path.splitIntoGrid"),
                         Sep,
@@ -1928,15 +2163,11 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 c("Area Type Options…", "text.areaOptions"),
                 sub(
                     "Type on a Path",
-                    vec![
-                        cp("Rainbow", "type.pathOptions", json!({"effect": "rainbow"})),
-                        cp("Skew", "type.pathOptions", json!({"effect": "skew"})),
-                        cp("3D Ribbon", "type.pathOptions", json!({"effect": "3dRibbon"})),
-                        cp("Stair Step", "type.pathOptions", json!({"effect": "stairStep"})),
-                        cp("Gravity", "type.pathOptions", json!({"effect": "gravity"})),
-                        Sep,
-                        cp("Type on a Path Options…", "type.pathOptions", json!({"start": 0})),
-                    ],
+                    PATH_EFFECTS
+                        .iter()
+                        .map(|&(label, effect)| cp(label, "type.pathOptions", json!({ "effect": effect })))
+                        .chain([Sep, c("Type on a Path Options…", "type.pathOptions")])
+                        .collect(),
                 ),
                 sub(
                     "Threaded Text",
@@ -1969,9 +2200,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 sub("Type Orientation", vec![c("Horizontal", "type.orientation.horizontal"), c("Vertical", "type.orientation.vertical")]),
             ],
         ),
-        (
-            "Select",
-            vec![
+        ("Select", {
+            let mut v = vec![
                 c("All", "select.all"),
                 c("All on Active Artboard", "select.allOnArtboard"),
                 c("Deselect", "select.none"),
@@ -2026,9 +2256,12 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 todo("Start Global Edit"),
                 Sep,
                 c("Save Selection…", "select.save"),
-                todo("Edit Selection…"),
-            ],
-        ),
+                c("Edit Selection…", "select.editSaved"),
+                Sep,
+            ];
+            v.extend(SAVED_SELECTION_IDS.iter().map(|id| c("Saved Selection", id)));
+            v
+        }),
         ("Effect", effect_menu()),
         (
             "View",
@@ -2141,7 +2374,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 c("Control", "window.control"),
                 c("Contextual Task Bar", "window.taskBar"),
                 c("Tools", "window.toolbar"),
-                sub("Toolbars", vec![c("Advanced", "window.toolbarAdvanced"), c("Single / Double Column", "window.toolbarColumns")]),
+                sub("Toolbars", vec![c("Advanced", "window.toolbarAdvanced"), c("Double Column", "window.toolbarColumns")]),
                 Sep,
                 panel("Actions", "actions"),
                 panel("Align", "align"),
@@ -2285,6 +2518,9 @@ pub fn context_items(app: &VectorcraftApp) -> Vec<Item> {
         let paths = any(|k| matches!(k, NodeKind::Path { .. }));
         if paths {
             v.extend([c("Join", "path.join"), c("Average…", "path.average")]);
+        }
+        if !st.selection.anchors.is_empty() {
+            v.extend([c("Remove Anchor Points", "path.removeAnchors"), c("Cut Path at Selected Anchor Points", "path.cutAtAnchors")]);
         }
         if several {
             v.push(c("Make Clipping Mask", "object.clippingMask.make"));
@@ -2458,7 +2694,20 @@ fn render_items(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], checks:
                     Some(false) => format!("     {label}"),
                     None => label,
                 };
-                let r = ui.add_enabled(en, egui::Button::new(text).shortcut_text(sc));
+                // Type → Font: each family's sample after its name (Enable in-menu font previews).
+                let sampled = p.get("font").and_then(Value::as_str).filter(|_| *id == "text.setStyle" && app.session.prefs.font_preview);
+                let r = match sampled {
+                    Some(family) => {
+                        let slot = ui.id().with(("font-sample", family));
+                        let button = egui::Button::new(text).right_text(egui::Atom::custom(slot, crate::font_menu::MENU_SAMPLE_SIZE));
+                        let out = ui.add_enabled_ui(en, |ui| button.atom_ui(ui)).inner;
+                        if let Some(rect) = out.rect(slot) {
+                            crate::font_menu::menu_item_sample(ui, rect, family);
+                        }
+                        out.response
+                    }
+                    None => ui.add_enabled(en, egui::Button::new(text).shortcut_text(sc)),
+                };
                 if r.clicked() {
                     *clicked = Some(click_target(label_of(it), id, p));
                     ui.close();
@@ -2472,6 +2721,13 @@ fn render_items(app: &VectorcraftApp, ui: &mut egui::Ui, items: &[Item], checks:
 /// document count. When either changes, the Home screen gives way to the document.
 pub(crate) fn home_key(app: &VectorcraftApp) -> (Option<u64>, usize) {
     (app.session.active().map(|d| d.uid), app.session.documents().len())
+}
+
+/// Whether the Home screen is up: chosen with the Home button (`app.home`), or no document is open
+/// and Preferences › General › Show The Home Screen When No Documents Are Open is on (#394). Off,
+/// an app with no document shows an empty window, and the Home button still opens the screen.
+pub(crate) fn home_showing(app: &VectorcraftApp) -> bool {
+    app.ui.home.is_some() || (app.session.active().is_none() && app.session.prefs.show_home_screen)
 }
 
 fn label_of(it: &Item) -> &'static str {
@@ -2493,6 +2749,17 @@ pub fn click_target(label: &str, id: &str, p: &Value) -> (String, Value) {
     (id.to_string(), if p.is_null() { json!({}) } else { p.clone() })
 }
 
+/// The dialog of command `id` that shows the selection's current values (its query): its heading
+/// and the queried values it doesn't show. Type on a Path Options leaves the brackets where they
+/// are.
+fn queried_dialog(id: &str) -> Option<(&'static str, &'static [&'static str])> {
+    Some(match id {
+        "text.areaOptions" => ("Area Type Options", &[]),
+        "type.pathOptions" => ("Type on a Path Options", &["start", "end"]),
+        _ => return None,
+    })
+}
+
 /// The dialog (kind, fields) the menu item of command `id` opens, as the reference app's does.
 fn menu_dialog(id: &str) -> Option<(&'static str, Value)> {
     Some(match id {
@@ -2509,6 +2776,32 @@ fn menu_dialog(id: &str) -> Option<(&'static str, Value)> {
         "object.vectorHalftone" => (crate::dialogs::halftone::KIND, crate::dialogs::halftone::fields()),
         _ => return None,
     })
+}
+
+/// The event a focused text field takes for Edit-menu command `id` (Select All, Cut, Copy,
+/// Paste), as the same keys would send it.
+fn field_event(app: &mut VectorcraftApp, id: &str) -> Option<egui::Event> {
+    Some(match id {
+        "select.all" => egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND },
+        "edit.copy" => egui::Event::Copy,
+        "edit.cut" => egui::Event::Cut,
+        "edit.paste" | "edit.pasteWithoutFormatting" => egui::Event::Paste(app.system_clipboard_text()?),
+        _ => return None,
+    })
+}
+
+/// Invoke an item of the system menu bar (macOS), chosen by a click or by its key equivalent: the
+/// system takes those keys before the window sees them. While a text field has the keyboard,
+/// Select All, Cut, Copy and Paste act on the field's text, as their keys do in the window;
+/// everything else (and those commands with no field focused) goes to [`invoke`].
+pub fn invoke_from_system_menu(app: &mut VectorcraftApp, ctx: &egui::Context, id: &str, p: Value) {
+    if ctx.text_edit_focused()
+        && let Some(e) = field_event(app, id)
+    {
+        ctx.input_mut(|i| i.events.push(e));
+        return;
+    }
+    invoke(app, id, p);
 }
 
 /// Invoke a menu/command id with UI side effects (dialogs for "…" commands that need input).
@@ -2537,11 +2830,17 @@ pub fn invoke(app: &mut VectorcraftApp, id: &str, p: Value) {
         let _ = app.run("ui.paramDialog", json!({"command": id, "label": "Repeat Options", "params": fields}));
         return;
     }
-    // Area Type Options: a dialog with the selected area type's current values.
-    if id == "text.areaOptions" && p.as_object().is_none_or(|o| o.is_empty()) {
+    // Area Type Options and Type on a Path Options: dialogs with the selected type's current
+    // values (the command's query), less those the dialog leaves alone.
+    if let Some((label, hidden)) = queried_dialog(id)
+        && p.as_object().is_none_or(|o| o.is_empty())
+    {
         match app.session.execute(id, &json!({})) {
-            Ok(fields) => {
-                let _ = app.run("ui.paramDialog", json!({"command": id, "label": "Area Type Options", "params": fields}));
+            Ok(mut fields) => {
+                if let Some(o) = fields.as_object_mut() {
+                    o.retain(|k, _| !hidden.contains(&k.as_str()));
+                }
+                let _ = app.run("ui.paramDialog", json!({"command": id, "label": label, "params": fields}));
             }
             Err(e) => app.status(e.to_string()),
         }
@@ -2572,6 +2871,19 @@ pub fn invoke(app: &mut VectorcraftApp, id: &str, p: Value) {
                     .run("ui.paramDialog", json!({"command": id, "label": "Edit Views", "params": {"name": name, "newName": "", "delete": false}}));
             }
             None => app.status("No saved views (View → New View…)"),
+        }
+        return;
+    }
+    // Save Selection…: a name dialog, starting from the first free "Selection N".
+    if id == "select.save" && p.as_object().is_none_or(|o| o.is_empty()) {
+        let name = app.session.active().map(|d| vectorcraft_engine::doc::SavedSelection::default_name(&d.doc.saved_selections)).unwrap_or_default();
+        let _ = app.run("ui.paramDialog", json!({"command": id, "label": "Save Selection", "params": {"name": name}}));
+        return;
+    }
+    // Edit Selection…: the saved selections in a list, to rename or delete.
+    if id == "select.editSaved" && p.as_object().is_none_or(|o| o.is_empty()) {
+        if let Err(e) = crate::dialogs::edit_selection::open(app) {
+            app.status(e);
         }
         return;
     }
@@ -2732,6 +3044,11 @@ const TYPE_SIZES: [(&str, u32); 14] = [
     ("60 pt", 60),
     ("72 pt", 72),
 ];
+
+/// Type → Type on a Path effects (label, `type.pathOptions` effect), also the choices of its
+/// Options dialog.
+pub(crate) const PATH_EFFECTS: &[(&str, &str)] =
+    &[("Rainbow", "rainbow"), ("Skew", "skew"), ("3D Ribbon", "3dRibbon"), ("Stair Step", "stairStep"), ("Gravity", "gravity")];
 
 const INSERT_SPECIAL: &[(&str, &str)] = &[
     ("Bullet", "bullet"),
@@ -2975,8 +3292,7 @@ pub fn menu_strings() -> std::collections::BTreeSet<String> {
         out.insert(c.label.to_string());
         out.extend(c.menu.iter().map(|m| m.to_string()));
     }
-    out.extend(ICON_PANELS.iter().map(|p| p.1.to_string()));
-    out.extend(["Properties", "Layers", "Libraries"].map(str::to_string));
+    out.extend(crate::state::all_panels().map(|(_, label)| label.to_string()));
     out.extend(vectorcraft_tools::catalog::all_tools().map(|t| t.label.to_string()));
     out.extend(crate::toolbar::BASIC.iter().map(|c| c.0.to_string()));
     out.extend(vectorcraft_color::BlendMode::ALL.iter().map(|m| m.label().to_string()));
@@ -3137,6 +3453,34 @@ mod tests {
     }
 
     #[test]
+    fn panel_ids_are_case_insensitive_and_labels_work() {
+        assert_eq!(normalize_panel("layers"), Some("layers"));
+        assert_eq!(normalize_panel("Layers"), Some("layers"));
+        assert_eq!(normalize_panel("LAYERS"), Some("layers"));
+        assert_eq!(normalize_panel("Swatches"), Some("swatches"));
+        assert_eq!(normalize_panel("swatches"), Some("swatches"));
+        assert_eq!(normalize_panel("Color Guide"), Some("colorGuide"));
+        assert_eq!(normalize_panel("colorguide"), Some("colorGuide"));
+        assert_eq!(normalize_panel("  Stroke  "), Some("stroke"));
+        assert_eq!(normalize_panel("nope"), None);
+
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("window.panel", json!({"panel": "Layers"})).unwrap();
+        assert_eq!(app.ui.dock_tab, crate::state::DockTab::Layers);
+        app.run("window.panel", json!({"panel": "Swatches"})).unwrap();
+        assert_eq!(app.ui.open_panel.as_deref(), Some("swatches"));
+        assert!(checked(&app, "window.panel", &json!({"panel": "Swatches"})).unwrap());
+        assert!(app.run("window.panel", json!({"panel": "nope"})).is_err());
+        // A collapsed dock pops the panel out of its icon, by canonical id.
+        app.ui.dock_collapsed = true;
+        app.run("window.panel", json!({"panel": "Layers"})).unwrap();
+        assert_eq!(app.ui.open_panel.as_deref(), Some("layers"));
+        assert!(checked(&app, "window.panel", &json!({"panel": "Layers"})).unwrap());
+        app.ui.dock_collapsed = false;
+    }
+
+    #[test]
     fn saved_views_store_and_restore_the_view() {
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({})).unwrap();
@@ -3156,6 +3500,77 @@ mod tests {
         assert!(!menu_entries(&app).iter().any(|e| e.command.as_deref() == Some("view.goto2")));
     }
 
+    fn app_with_a_rectangle() -> VectorcraftApp {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.run("shape.rectangle", json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap();
+        app
+    }
+
+    #[test]
+    fn save_selection_asks_for_a_name() {
+        let mut app = app_with_a_rectangle();
+        invoke(&mut app, "select.save", json!({}));
+        let d = app.ui.dialog.clone().expect("Save Selection dialog");
+        assert_eq!(
+            (d.kind.as_str(), d.str("__command"), d.str("__label"), d.str("name")),
+            ("command", "select.save".into(), "Save Selection".into(), "Selection 1".into())
+        );
+        // OK saves under the name typed.
+        let mut d = d;
+        d.fields.insert("name".into(), json!("Logo"));
+        app.ui.dialog = Some(d);
+        crate::dialogs::confirm(&mut app).unwrap();
+        assert_eq!(app.run("select.savedList", json!({})).unwrap(), json!(["Logo"]));
+        // The next one starts from the first free name.
+        invoke(&mut app, "select.save", json!({}));
+        assert_eq!(app.ui.dialog.as_ref().map(|d| d.str("name")), Some("Selection 1".into()));
+    }
+
+    #[test]
+    fn saved_selections_are_listed_at_the_bottom_of_the_select_menu() {
+        let mut app = app_with_a_rectangle();
+        app.run("shape.ellipse", json!({"x": 40, "y": 0, "width": 10, "height": 10})).unwrap();
+        // Nothing saved: no slot is listed or enabled.
+        assert!(!enabled(&app, "select.recall1"));
+        assert!(!menu_entries(&app).iter().any(|e| e.command.as_deref() == Some("select.recall1")));
+        app.run("select.save", json!({"name": "Ellipse"})).unwrap();
+        app.run("select.none", json!({})).unwrap();
+        app.run("select.all", json!({})).unwrap();
+        app.run("select.save", json!({"name": "Everything"})).unwrap();
+        assert!(enabled(&app, "select.recall1") && enabled(&app, "select.recall2") && !enabled(&app, "select.recall3"));
+        assert_eq!(dynamic_label(&app, "select.recall2", "Saved Selection"), "Everything");
+        // A name is shown as it is, not translated.
+        assert_eq!(display_label(&app, "select.recall2", "Saved Selection"), "Everything");
+        assert!(menu_entries(&app).iter().any(|e| e.command.as_deref() == Some("select.recall2")));
+        assert!(!menu_entries(&app).iter().any(|e| e.command.as_deref() == Some("select.recall3")));
+        // Choosing one selects its objects again.
+        app.run("select.none", json!({})).unwrap();
+        let r = app.run("select.recall2", json!({})).unwrap();
+        assert!(r["count"].as_u64().unwrap() >= 1);
+        assert_eq!(app.session.active().unwrap().selection.len(), 2);
+        // The native menu is rebuilt when the number of slots changes.
+        let listed = listed_slots(&app);
+        app.run("select.editSaved", json!({"name": "Ellipse", "delete": true})).unwrap();
+        assert_eq!(listed_slots(&app), listed - 1);
+        assert!(!enabled(&app, "select.recall2"));
+    }
+
+    #[test]
+    fn edit_selection_opens_its_dialog_on_the_saved_selections() {
+        let mut app = app_with_a_rectangle();
+        // Nothing saved yet: the item is off, and invoking it (palette, shortcut) only says so.
+        assert!(!enabled(&app, "select.editSaved"));
+        invoke(&mut app, "select.editSaved", json!({}));
+        assert!(app.ui.dialog.is_none());
+        assert!(app.ui.status.contains("No saved selections"), "{}", app.ui.status);
+        app.run("select.save", json!({"name": "Logo"})).unwrap();
+        assert!(enabled(&app, "select.editSaved"));
+        invoke(&mut app, "select.editSaved", json!({}));
+        let d = app.ui.dialog.clone().expect("Edit Selection dialog");
+        assert_eq!((d.kind.as_str(), d.str("orig0"), d.str("name0")), (crate::dialogs::edit_selection::KIND, "Logo".into(), "Logo".into()));
+    }
+
     #[test]
     fn recent_fonts_and_corner_widget_toggle() {
         let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
@@ -3173,6 +3588,39 @@ mod tests {
         assert_eq!(dynamic_label(&app, "view.cornerWidget", ""), "Hide Corner Widget");
         app.run("view.cornerWidget", json!({})).unwrap();
         assert_eq!(dynamic_label(&app, "view.cornerWidget", ""), "Show Corner Widget");
+    }
+
+    /// Selection & Anchor Display › Zoom to Selection (#394): Zoom In and Zoom Out bring the
+    /// selection to the middle; off, they keep the view's centre.
+    #[test]
+    fn zoom_to_selection_centres_the_selection() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
+        app.run("shape.rectangle", json!({"x": 10, "y": 20, "width": 40, "height": 20})).unwrap();
+        let center = |app: &VectorcraftApp| app.view().unwrap().center;
+        let start = center(&app);
+        app.run("prefs.set", json!({"key": "zoomToSelection", "value": false})).unwrap();
+        app.run("view.zoomIn", json!({})).unwrap();
+        assert_eq!(center(&app), start, "off: the view's centre stays");
+        app.run("prefs.set", json!({"key": "zoomToSelection", "value": true})).unwrap();
+        app.run("view.zoomOut", json!({})).unwrap();
+        assert_eq!(center(&app), vectorcraft_geom::Point::new(30.0, 30.0), "on: the selection's centre");
+    }
+
+    /// Preferences › Type › Number of Recent Fonts (#394): Type › Recent Fonts lists that many.
+    #[test]
+    fn number_of_recent_fonts_sets_how_many_are_listed() {
+        let mut app = VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({})).unwrap();
+        app.ui.recent_fonts = (1..=15).map(|i| format!("Font {i}")).collect();
+        let listed = |app: &VectorcraftApp| RECENT_FONT_IDS.iter().filter(|id| enabled(app, id)).count();
+        assert_eq!(listed(&app), 10, "10 by default");
+        for n in [15, 2] {
+            app.run("prefs.set", json!({"key": "recentFontsCount", "value": n})).unwrap();
+            assert_eq!(listed(&app), n);
+        }
+        assert_eq!(dynamic_label(&app, "type.recentFont2", "Recent Font"), "Font 2");
+        assert!(app.run("type.recentFont3", json!({})).is_err(), "past the count");
     }
 
     #[test]

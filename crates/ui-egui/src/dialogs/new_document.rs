@@ -84,7 +84,6 @@ const DETAILS_MARGIN_Y: f32 = 18.0 + 18.0;
 /// pushes the top edge off the screen.
 /// MEASURED: height of the Cancel/OK row at the bottom of the Details column, which
 /// sits outside the `ScrollArea` and therefore adds to the window height.
-const ANCHOR_Y: f32 = -20.0;
 const BUTTON_ROW: f32 = 44.0;
 /// Floor for the dialog height, so a very short window still shows something.
 const MIN_HEIGHT: f32 = 200.0;
@@ -175,37 +174,9 @@ fn set_layout(d: &mut Dialog, key: &str, v: Value) {
     d.fields.insert("artboardLayout".into(), l);
 }
 
-/// The dimmed backdrop and a centred dialog window in the shared dialog style.
+/// The New Document dialog window `id` in the shared modal frame.
 fn window(ctx: &egui::Context, id: &str, margin: i8, add: impl FnOnce(&mut egui::Ui)) {
-    let t = Tokens::get(ctx);
-    egui::Area::new(egui::Id::new("modal-dim")).order(egui::Order::Middle).fixed_pos(egui::pos2(0.0, 0.0)).show(ctx, |ui| {
-        ui.allocate_rect(ctx.content_rect(), egui::Sense::click());
-    });
-    let resp = egui::Window::new(id)
-        .id(egui::Id::new(("dialog", id)))
-        .order(egui::Order::Foreground)
-        .collapsible(false)
-        .resizable(false)
-        .title_bar(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0])
-        .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(margin)))
-        .show(ctx, add);
-    // MEASURED, and it is here because this dialog got the fit-to-screen wrong twice
-    // and the only thing that settles it is the number. `content_rect` is not
-    // knowable without asking egui at runtime, and the frame/margin rules add more on
-    // top than the arithmetic assumes; guessing is what caused a 19pt overflow.
-    //
-    // MEASURED: there is no `screen_rect()` on `egui::Context` in 0.36, it is
-    // `viewport_rect()`:
-    //
-    //     error[E0599]: no method named `screen_rect` found for reference
-    //                   `&egui::Context` in the current scope
-    if let Some(r) = resp {
-        log::info!(
-            "dialog {id}: viewport {:?}, hueco {:?}, ventana {:?}",
-            ctx.viewport_rect(), ctx.content_rect(), r.response.rect
-        );
-    }
+    super::modal::show(ctx, id, egui::Id::new(("dialog", id)), -20.0, margin, add);
 }
 
 /// What the buttons of a window asked for.
@@ -234,65 +205,9 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let mut b = Buttons::default();
     window(ctx, KIND, 0, |ui| {
-        // MEASURED: the dialog used to be sized from fixed numbers — `640` for the
-        // presets column plus `DETAILS` wide, and `HEIGHT` tall — without ever
-        // looking at the screen. On a phone that does not fit in either
-        // orientation, and it was clipped on every side.
-        //
-        // MEASURED on a moto g56 5G (2400x1080, density 390, so egui gets 2.4375
-        // points per physical pixel):
-        //
-        //   |                   | wants | portrait | landscape |
-        //   |-------------------|-------|----------|-----------|
-        //   | width  (640+292)  |  932  |  443  no | 985  yes  |
-        //   | height (HEIGHT)   |  600  |  985  yes | 443  no   |
-        //
-        // So portrait overflowed sideways and landscape overflowed vertically, and
-        // because the details column had no `ScrollArea` (unlike the presets one,
-        // which does) the clipped content was unreachable, not merely hidden.
-        //
-        // Now both columns share whatever the content rect actually leaves, and
-        // details scrolls too. On a desktop-sized window nothing changes: the
-        // numbers above all fit, so the clamps never engage.
-        // MEASURED: the first version of this clamped `avail_w = avail.width() - 16`
-        // and split *that* between the two columns. It did not work, and the reason
-        // is that the two columns' `inner_margin`s sit on top of the widths set with
-        // `set_width`, they are not inside them. The dialog therefore wanted
-        //
-        //     22 + 640 + 14 + 18 + 292 + 18  =  1004pt
-        //
-        // against a landscape viewport of 985pt — 19pt too wide, clipped on both
-        // sides, which is what the phone screenshot showed.
-        //
-        // So the margins come off first, then the rest is what the columns share.
-        // The outer frame's own margin is 0 (`window(ctx, KIND, 0, ..)`).
-        let avail = ctx.content_rect();
-        // A 94% of the room, so the dialog never touches the edges: the point of
-        // this is for it to look *placed*, not merely not-clipped.
-        let gap = ui.spacing().item_spacing.x;
-        let avail_w = ((avail.width() - PRESETS_MARGIN_X - DETAILS_MARGIN_X - gap) * 0.94).max(1.0);
-        // MEASURED, off a real phone log:
-        //
-        //     viewport [0.0 0.0] - [937.4 443.1]
-        //     ventana  [12.3 -13.5] - [925.3 443.0]
-        //
-        // The width was fine — 913 inside 937 — but the top edge sat at **y = -13.5**,
-        // outside the screen. Two reasons, and both are the same one as the width bug:
-        //
-        //   1. `set_min_height` is *inside* the Details frame, so its 36pt of inner
-        //      margin is added on top. The window is taller than the height asked for.
-        //   2. The anchor shifts it another -20pt, which a 443pt-tall screen has no
-        //      room for once the dialog is centred.
-        //
-        // So the height that gets requested is the *total* minus the frame margins,
-        // minus the button row that sits outside the `ScrollArea`, and the whole thing
-        // leaves room for the anchor shift.
-        let max_total_h = avail.height() + ANCHOR_Y - 32.0;
-        let height = (max_total_h - DETAILS_MARGIN_Y - BUTTON_ROW).min(HEIGHT).max(MIN_HEIGHT);
-        // Details never takes more than 45%, so on a narrow screen both columns stay
-        // usable instead of Details eating everything.
-        let details_w = DETAILS.min(avail_w * 0.45);
-        let presets_w = (avail_w - details_w).min(PRESETS);
+        // No heading: the top margin (14) and the empty part of the category tabs' row (30) move the
+        // window.
+        super::modal::drag_band(ui, ui.max_rect().top() + 44.0);
         ui.horizontal_top(|ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 22, right: 14, top: 14, bottom: 18 }).show(ui, |ui| {
                 ui.vertical(|ui| {
@@ -595,7 +510,7 @@ fn show_more(app: &mut VectorcraftApp, ctx: &egui::Context) {
     const L: f32 = 150.0;
     window(ctx, MORE, 22, |ui| {
         ui.set_width(560.0);
-        ui.label(egui::RichText::new(tl!("More Settings")).font(theme::semibold(16.0)).color(t.text));
+        super::modal::heading(ui, tl!("More Settings"));
         ui.add_space(12.0);
         widgets::label_row(ui, tl!("Name:"), L, |ui| {
             form::text(ui, &mut d, "name", 300.0);
@@ -639,7 +554,7 @@ fn show_more(app: &mut VectorcraftApp, ctx: &egui::Context) {
                     set_layout(&mut d, "spacing", json!(v.max(0.0)));
                 }
                 ui.add_space(20.0);
-                ui.label(egui::RichText::new(tl!("Columns:")).color(t.text));
+                widgets::field_label(ui, egui::RichText::new(tl!("Columns:")).color(t.text));
                 let grid = matches!(lay, ArtboardLayout::GridByRow | ArtboardLayout::GridByColumn);
                 ui.add_enabled_ui(grid, |ui| {
                     if let Some(v) = widgets::spin_plain(ui, "newdoc-columns", cols as f64, "", 0, 76.0, 1.0, 1.0, &[]) {

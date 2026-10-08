@@ -3,6 +3,9 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use unicode_bidi::Level;
+use unicode_script::{Script, UnicodeScript};
+
 use harfrust::{Direction, Feature, ShapeOptions, UnicodeBuffer};
 use skrifa::MetadataProvider;
 use skrifa::instance::Size;
@@ -42,6 +45,11 @@ pub(crate) struct SGlyph {
     pub ch: char,
     /// Vertical type: part of a tate-chu-yoko block (set across the column, upright).
     pub tcy: Option<Tcy>,
+    /// Japanese composition: the space taken off before the glyph (an opening bracket after
+    /// another, see [`crate::layout`]); the glyph is drawn that much earlier on the line.
+    pub lead: f64,
+    /// Resolved Unicode bidi embedding level (logical source order).
+    pub level: Level,
 }
 
 /// A glyph's place in a tate-chu-yoko block: the block takes one em of the column, its glyphs side
@@ -137,7 +145,26 @@ pub(crate) fn no_line_end(c: char) -> bool {
     )
 }
 
-fn is_cjk(c: char) -> bool {
+/// Full-width punctuation for Japanese composition (JLREQ cl-01, cl-02, cl-06, cl-07).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Punct {
+    /// An opening bracket: its half-em space is before the mark.
+    Opening,
+    /// A closing bracket, comma or full stop: its half-em space is after the mark.
+    Closing,
+}
+
+pub(crate) fn punct(c: char) -> Option<Punct> {
+    match c {
+        '（' | '「' | '『' | '【' | '〔' | '〈' | '《' | '［' | '｛' | '〘' | '〖' | '｟' | '〝' => Some(Punct::Opening),
+        '）' | '」' | '』' | '】' | '〕' | '〉' | '》' | '］' | '｝' | '〙' | '〗' | '｠' | '〟' | '、' | '。' | '，' | '．' => {
+            Some(Punct::Closing)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn is_cjk(c: char) -> bool {
     matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FFFF)
 }
 
@@ -157,15 +184,20 @@ pub(crate) fn cap_x_heights(db: &FontDb, st: &CharStyle) -> (f64, f64) {
     (face.cap_height * k, face.x_height * k)
 }
 
-/// Shape `text[range]`, where `runs` gives each run's byte range in `text` and style.
+/// Shape `text[range]`, where `runs` gives each run's byte range in `text` and style, and `levels`
+/// each byte's bidi embedding level from `range.start` (empty: all left to right). Glyphs come out
+/// in logical order, right-to-left ones shaped right to left.
 pub(crate) fn shape_range(
     db: &FontDb,
     text: &str,
     range: Range<usize>,
     runs: &[(Range<usize>, &CharStyle)],
     feats: &OtFeatures,
+    levels: &[Level],
     out: &mut Vec<SGlyph>,
 ) {
+    let level_at = |i: usize| levels.get(i - range.start).copied().unwrap_or_else(Level::ltr);
+    let output_start = out.len();
     for (ri, (rr, st)) in runs.iter().enumerate() {
         let a = rr.start.max(range.start);
         let b = rr.end.min(range.end);
@@ -177,10 +209,12 @@ pub(crate) fn shape_range(
         // Synthesized Small Caps shape lowercase letters separately (as smaller capitals).
         let small_caps = st.small_caps.is_some() && !st.all_caps;
         // Split into segments by font coverage (and case, for Small Caps).
-        let mut seg = Segment { range: a..a, run: ri, st, face: primary.clone(), small: false };
+        let mut seg = Segment { range: a..a, run: ri, st, face: primary.clone(), small: false, level: level_at(a) };
         let mut cache: Vec<(char, Arc<FontFace>)> = Vec::new();
+        let mut script = Script::Common;
         for (i, c) in text[a..b].char_indices() {
             let i = a + i;
+            let level = level_at(i);
             let covered = c.is_whitespace() || c.is_control() || pmap.as_ref().is_none_or(|m| m.map(c).is_some());
             let face = if covered {
                 primary.clone()
@@ -192,19 +226,41 @@ pub(crate) fn shape_range(
                 f
             };
             let small = small_caps && c.is_lowercase();
+            let next_script = shaping_script(c);
+            let strong_script = !matches!(next_script, Script::Common | Script::Inherited);
+            let script_change = strong_script && script != Script::Common && script != next_script;
             // Combining marks stay with their base.
-            if (face.id() != seg.face.id() || small != seg.small) && !is_mark(c) {
+            if (face.id() != seg.face.id() || small != seg.small || level != seg.level || script_change) && !is_mark(c) {
                 if i > seg.range.start {
                     seg.range.end = i;
                     shape_segment(text, &seg, feats, out);
                 }
-                seg = Segment { range: i..i, face, small, ..seg };
+                seg = Segment { range: i..i, face, small, level, ..seg };
+            }
+            if strong_script {
+                script = next_script;
             }
         }
         if b > seg.range.start {
             seg.range.end = b;
             shape_segment(text, &seg, feats, out);
         }
+    }
+    // Right-to-left segments come out of the shaper in visual order: back to logical order for
+    // line breaking (the lines are put in visual order once broken).
+    if levels.iter().any(|l| l.is_rtl())
+        && let Some(o) = out.get_mut(output_start..)
+    {
+        o.sort_by_key(|g| g.byte);
+    }
+}
+
+/// The script `c` is shaped in: Japanese and Chinese text mixes Han, Hiragana, Katakana and
+/// Bopomofo, shaped together (splitting them would cost a shaper call per change of script).
+fn shaping_script(c: char) -> Script {
+    match c.script() {
+        Script::Hiragana | Script::Katakana | Script::Bopomofo => Script::Han,
+        s => s,
     }
 }
 
@@ -216,14 +272,17 @@ struct Segment<'a> {
     face: Arc<FontFace>,
     /// Lowercase letters drawn as synthesized small capitals.
     small: bool,
+    level: Level,
 }
 
 fn is_mark(c: char) -> bool {
-    matches!(c as u32, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F | 0x200D | 0xFE00..=0xFE0F)
+    use unicode_general_category::{GeneralCategory, get_general_category};
+    matches!(get_general_category(c), GeneralCategory::NonspacingMark | GeneralCategory::SpacingMark | GeneralCategory::EnclosingMark)
+        || matches!(c, '\u{200D}' | '\u{FE00}'..='\u{FE0F}')
 }
 
 fn shape_segment(text: &str, seg: &Segment, feats: &OtFeatures, out: &mut Vec<SGlyph>) {
-    let Segment { range, run, st, face, small } = seg;
+    let Segment { range, run, st, face, small, level } = seg;
     let (range, run, small) = (range.clone(), *run, *small);
     let text_seg = &text[range.clone()];
     let full = st.size.max(0.0);
@@ -259,7 +318,7 @@ fn shape_segment(text: &str, seg: &Segment, feats: &OtFeatures, out: &mut Vec<SG
                 buf.add(c, cl);
             }
         }
-        buf.set_direction(Direction::LeftToRight);
+        buf.set_direction(if level.is_rtl() { Direction::RightToLeft } else { Direction::LeftToRight });
         buf.guess_segment_properties();
         let feats: Vec<Feature> = feats.resolve(st);
         let gb = shaper.shape(buf, ShapeOptions::new().features(&feats));
@@ -283,11 +342,14 @@ fn shape_segment(text: &str, seg: &Segment, feats: &OtFeatures, out: &mut Vec<SG
             }
         }
     }
+    let mut cluster_starts: Vec<usize> = raw.iter().map(|r| r.1 as usize).collect();
+    cluster_starts.sort_unstable();
+    cluster_starts.dedup();
     let n = raw.len();
     for (gi, &(gid, cl, xa, xo, yo)) in raw.iter().enumerate() {
         let cl = cl as usize;
         // Cluster end: the next larger cluster value in the segment, else the segment end.
-        let end = raw[gi + 1..].iter().map(|r| r.1 as usize).find(|&c| c > cl).unwrap_or(range.end);
+        let end = cluster_starts.get(cluster_starts.partition_point(|&c| c <= cl)).copied().unwrap_or(range.end);
         let last_in_cluster = gi + 1 == n || raw[gi + 1].1 as usize != cl;
         let ch = first_char(cl);
         let mut adv = xa as f64 * k * hs;
@@ -316,6 +378,8 @@ fn shape_segment(text: &str, seg: &Segment, feats: &OtFeatures, out: &mut Vec<SG
             xh,
             ch,
             tcy: None,
+            lead: 0.0,
+            level: *level,
         });
     }
 }

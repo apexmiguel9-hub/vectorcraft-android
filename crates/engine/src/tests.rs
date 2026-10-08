@@ -252,6 +252,33 @@ fn pen_tool_draws_closed_path() {
     assert!(p.is_closed());
 }
 
+/// Auto Add/Delete: a Pen click on a selected path's segment adds an anchor, unless General →
+/// Disable Auto Add/Delete is on.
+#[test]
+fn pen_click_on_a_selected_path_adds_an_anchor_unless_disabled() {
+    let mut s = session();
+    let v = ViewInfo::default();
+    let r = s.execute("path.create", &json!({"anchors": [{"x": 10, "y": 100}, {"x": 110, "y": 100}, {"x": 210, "y": 100}]})).unwrap();
+    let id = NodeId(r["id"].as_u64().unwrap());
+    s.execute("select.all", &json!({})).unwrap();
+    s.select_tool("pen", v).unwrap();
+    let click = |s: &mut Session| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, 60.0, 101.0), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, 60.0, 101.0), v).unwrap();
+    };
+    click(&mut s);
+    let d = &s.doc().unwrap().doc;
+    assert_eq!(d.layers[0].children().unwrap().len(), 1);
+    assert_eq!(d.node(id).unwrap().path_data().unwrap().anchor_count(), 4);
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("prefs.set", &json!({"key": "disableAutoAddDelete", "value": true})).unwrap();
+    s.execute("select.all", &json!({})).unwrap();
+    click(&mut s);
+    let d = &s.doc().unwrap().doc;
+    assert_eq!(d.layers[0].children().unwrap().len(), 2, "a new path starts");
+    assert_eq!(d.node(id).unwrap().path_data().unwrap().anchor_count(), 3);
+}
+
 #[test]
 fn direct_selection_moves_one_anchor() {
     let mut s = session();
@@ -265,6 +292,43 @@ fn direct_selection_moves_one_anchor() {
     let p = s.doc().unwrap().doc.node(a).unwrap().path_data().unwrap().clone();
     assert_eq!(p.subpaths[0].anchors[0].p, vectorcraft_geom::Point::new(90.0, 90.0));
     assert_eq!(p.subpaths[0].anchors[1].p, vectorcraft_geom::Point::new(200.0, 100.0));
+}
+
+/// Dragging a curved segment with Direct Selection bends it (its anchors stay), and dragging a
+/// straight one moves its two anchors, not the whole path; each is one undo step.
+#[test]
+fn direct_selection_drags_segments() {
+    let mut s = session();
+    let v = ViewInfo::default();
+    let drag = |s: &mut Session, from: (f64, f64), to: (f64, f64)| {
+        s.pointer(&PointerEvent::new(PointerKind::Down, from.0, from.1), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Drag, to.0, to.1), v).unwrap();
+        s.pointer(&PointerEvent::new(PointerKind::Up, to.0, to.1), v).unwrap();
+    };
+    let arch = &json!({"anchors": [{"x": 100, "y": 200, "out": [100, 100]}, {"x": 300, "y": 200, "in": [300, 100]}]});
+    let arch = NodeId(s.execute("path.create", arch).unwrap()["id"].as_u64().unwrap());
+    let square = &json!({"anchors": [{"x": 150, "y": 400}, {"x": 150, "y": 300}, {"x": 250, "y": 300}, {"x": 250, "y": 400}], "closed": true});
+    let square = NodeId(s.execute("path.create", square).unwrap()["id"].as_u64().unwrap());
+    s.execute("select.none", &json!({})).unwrap();
+    s.select_tool("directSelection", v).unwrap();
+    let steps = |s: &Session| s.doc().unwrap().history.undo.len();
+    let before = steps(&s);
+    // The arch's middle, 40 up: the curve bends, its two anchors stay.
+    drag(&mut s, (200.0, 125.0), (200.0, 85.0));
+    let sp = s.doc().unwrap().doc.node(arch).unwrap().path_data().unwrap().subpaths[0].clone();
+    let (a, b) = (sp.anchors[0], sp.anchors[1]);
+    assert_eq!((a.p, b.p), (vectorcraft_geom::Point::new(100.0, 200.0), vectorcraft_geom::Point::new(300.0, 200.0)), "the anchors stay");
+    assert!(a.h_out.y < 100.0 && b.h_in.y < 100.0, "the curve bent up: {a:?} {b:?}");
+    assert_eq!(steps(&s), before + 1);
+    // The square's top edge, 40 up: its two anchors move, the bottom two stay.
+    drag(&mut s, (200.0, 300.0), (200.0, 260.0));
+    let sq = s.doc().unwrap().doc.node(square).unwrap().geometric_bounds().unwrap();
+    assert_eq!((sq.y0, sq.y1, sq.x0, sq.x1), (260.0, 400.0, 150.0, 250.0), "the edge moved, the rest stayed");
+    assert_eq!(steps(&s), before + 2);
+    // Its fill still moves the whole square.
+    drag(&mut s, (200.0, 350.0), (200.0, 330.0));
+    let sq = s.doc().unwrap().doc.node(square).unwrap().geometric_bounds().unwrap();
+    assert_eq!((sq.y0, sq.y1), (240.0, 380.0), "the whole path moved");
 }
 
 #[test]
@@ -283,6 +347,127 @@ fn inspect_lists_everything() {
     let v = s.execute("document.inspect", &json!({})).unwrap();
     assert_eq!(v["layers"][0]["children"][0]["kind"], "Rectangle");
     assert!(s.commands().len() > 100);
+}
+
+/// `document.node {summary: true}` answers the `document.inspect` shape for one node:
+/// the same fields the full-tree summary carries, without serializing the whole tree.
+#[test]
+fn document_node_summary_matches_inspect() {
+    let mut s = session();
+    let id = rect(&mut s, 0.0, 0.0, 10.0, 10.0).0;
+    let full = s.execute("document.node", &json!({"id": id})).unwrap();
+    assert!(full.get("bounds").is_none(), "full object JSON carries geometry, not bounds: {full}");
+    let summary = s.execute("document.node", &json!({"id": id, "summary": true})).unwrap();
+    let v = s.execute("document.inspect", &json!({})).unwrap();
+    let node = v["layers"][0]["children"].as_array().unwrap().iter().find(|n| n["id"] == id).cloned().unwrap();
+    assert_eq!(summary, node, "{summary} vs {node}");
+    assert!(s.execute("document.node", &json!({"id": 999999, "summary": true})).is_err());
+}
+
+/// `depth` and `childLimit` slice a summary read; a level that shows fewer children
+/// than it has reports `childCount`, and invalid values are rejected, not reinterpreted.
+#[test]
+fn document_node_summary_slices_with_depth_and_limit() {
+    let mut s = session();
+    rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    rect(&mut s, 20.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    let inner = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    rect(&mut s, 40.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    let outer = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    let mut read = |p: Value| s.execute("document.node", &p).unwrap();
+
+    let g = read(json!({"id": outer, "summary": true}));
+    assert_eq!(g["children"].as_array().map(Vec::len), Some(2));
+    assert!(g.get("childCount").is_none(), "nothing truncated: {g}");
+    // Limits beyond the tree are the whole tree, byte for byte.
+    assert_eq!(read(json!({"id": outer, "summary": true, "depth": u64::MAX, "childLimit": u64::MAX})), g);
+
+    let one = read(json!({"id": outer, "summary": true, "childLimit": 1}));
+    assert_eq!(one["children"].as_array().map(Vec::len), Some(1));
+    assert_eq!(one["childCount"], 2);
+
+    let flat = read(json!({"id": outer, "summary": true, "depth": 0}));
+    assert!(flat.get("children").is_none(), "{flat}");
+    assert_eq!(flat["childCount"], 2);
+
+    // Limits compose per level: the outer children show; the inner group's own
+    // children don't, and it says so.
+    let shallow = read(json!({"id": outer, "summary": true, "depth": 1}));
+    let kids = shallow["children"].as_array().unwrap();
+    assert_eq!(kids.len(), 2);
+    assert!(shallow.get("childCount").is_none(), "{shallow}");
+    let nested = kids.iter().find(|n| n["id"] == inner).unwrap();
+    assert!(nested.get("children").is_none(), "{nested}");
+    assert_eq!(nested["childCount"], 2);
+
+    for bad in [
+        json!({"id": outer, "summary": true, "depth": -1}),
+        json!({"id": outer, "summary": true, "depth": 1.5}),
+        json!({"id": outer, "summary": true, "childLimit": "many"}),
+        // A slice of the full object JSON would silently be the whole subtree.
+        json!({"id": outer, "depth": 0}),
+        json!({"id": outer, "summary": false, "childLimit": 1}),
+    ] {
+        assert!(s.execute("document.node", &bad).is_err(), "{bad}");
+    }
+}
+
+/// `document.inspect` slices the layer tree with the same options; artboards and the
+/// rest always come whole, and the default output is unchanged.
+#[test]
+fn document_inspect_slices_the_layer_tree() {
+    let mut s = session();
+    rect(&mut s, 0.0, 0.0, 10.0, 10.0);
+    rect(&mut s, 20.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    s.execute("object.group", &json!({})).unwrap();
+
+    let full = s.execute("document.inspect", &json!({})).unwrap();
+    assert!(full["layers"][0].get("childCount").is_none(), "{full}");
+    let flat = s.execute("document.inspect", &json!({"depth": 0})).unwrap();
+    assert!(flat["layers"][0].get("children").is_none(), "{flat}");
+    assert_eq!(flat["layers"][0]["childCount"], 1);
+    assert_eq!(flat["artboards"], full["artboards"]);
+    assert_eq!(flat["objects"], full["objects"]);
+    let one = s.execute("document.inspect", &json!({"childLimit": 0})).unwrap();
+    assert_eq!(one["layers"][0]["children"], json!([]));
+    assert_eq!(one["layers"][0]["childCount"], 1);
+    assert!(s.execute("document.inspect", &json!({"depth": "deep"})).is_err());
+}
+
+/// `document.find` searches names, kinds and type content across the whole tree and
+/// answers ids with ancestor paths plus the total, so capped replies stay explicit.
+#[test]
+fn document_find_searches_names_kinds_and_text() {
+    let mut s = session();
+    let a = rect(&mut s, 0.0, 0.0, 10.0, 10.0).0;
+    s.execute("object.setProps", &json!({"ids": [a], "name": "Hero Banner"})).unwrap();
+    rect(&mut s, 20.0, 0.0, 10.0, 10.0);
+    s.execute("select.all", &json!({})).unwrap();
+    let group = s.execute("object.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    let mut find = |p: Value| s.execute("document.find", &p).unwrap();
+
+    let v = find(json!({"name": "hero"}));
+    assert_eq!(v["total"], 1);
+    assert_eq!(v["matches"][0]["id"], a);
+    assert_eq!(v["matches"][0]["path"], json!([1, group]));
+
+    let v = find(json!({"kind": "group"}));
+    assert_eq!(v["total"], 1);
+    assert_eq!(v["matches"][0]["id"], group);
+
+    // `limit: 0` counts without listing; a missing filter is rejected, not a full dump.
+    let v = find(json!({"kind": "rectangle", "limit": 0}));
+    assert_eq!(v["matches"].as_array().map(Vec::len), Some(0));
+    assert_eq!(v["total"], 2);
+    assert!(s.execute("document.find", &json!({})).is_err());
+    assert!(s.execute("document.find", &json!({"name": ""})).is_err());
+    assert!(s.execute("document.find", &json!({"name": "hero", "limit": "many"})).is_err());
+    // A filter of the wrong type is rejected, not dropped (dropping it would widen the search).
+    assert!(s.execute("document.find", &json!({"kind": "group", "name": 5})).is_err());
+    assert_eq!(s.execute("document.find", &json!({"kind": "nope"})).unwrap()["total"], 0);
 }
 
 /// Type reports the paint its characters show, and its own object-level paint apart from it.
@@ -542,4 +727,21 @@ fn a_panicking_command_rolls_back_instead_of_crashing() {
     let b = rect(&mut s, 200.0, 10.0, 50.0, 50.0);
     assert!(s.doc().unwrap().doc.node(b).is_some());
     assert_eq!(s.journal.last().map(|j| j.0.as_str()), Some("shape.rectangle"));
+}
+
+/// New layers and sublayers share one "Layer N" numbering, whatever art the document holds, and
+/// never repeat a name.
+#[test]
+fn new_layers_and_sublayers_are_numbered_together() {
+    let name = |s: &Session, id: &Value| s.doc().unwrap().doc.node(NodeId(id["id"].as_u64().unwrap())).unwrap().display_name().to_string();
+    let mut s = session();
+    let sub = s.execute("layer.newSublayer", &json!({})).unwrap();
+    assert_eq!(name(&s, &sub), "Layer 2", "not its parent's name");
+    for x in [0.0, 60.0, 120.0, 180.0, 240.0] {
+        rect(&mut s, x, 0.0, 50.0, 50.0);
+    }
+    let layer = s.execute("layer.new", &json!({})).unwrap();
+    assert_eq!(name(&s, &layer), "Layer 3", "after the sublayer, not a repeat of it");
+    let sub = s.execute("layer.newSublayer", &json!({})).unwrap();
+    assert_eq!(name(&s, &sub), "Layer 4", "the art doesn't count");
 }

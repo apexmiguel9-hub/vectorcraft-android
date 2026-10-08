@@ -17,12 +17,17 @@ pub mod background;
 mod brand;
 pub mod canvas;
 pub mod chrome;
+mod clipboard_probe;
 pub mod community;
 pub mod control;
+pub mod credits;
 pub mod cursors;
 pub mod dialogs;
 pub mod dock;
 pub mod find_font;
+pub mod floating;
+pub mod font_menu;
+pub mod graphics;
 pub mod i18n;
 pub mod icon_data;
 pub mod icons;
@@ -35,6 +40,7 @@ pub mod prefs_dialog;
 pub mod print;
 pub mod recovery;
 pub mod render_worker;
+mod scrub;
 pub mod shortcut_editor;
 pub mod shortcuts;
 pub mod state;
@@ -64,6 +70,8 @@ mod tests_distortkeys;
 #[cfg(test)]
 mod tests_docsetup;
 #[cfg(test)]
+mod tests_font_menu;
+#[cfg(test)]
 mod tests_fonts;
 #[cfg(test)]
 mod tests_home;
@@ -79,6 +87,8 @@ mod tests_overprint;
 mod tests_paintchips;
 #[cfg(test)]
 mod tests_pastechords;
+#[cfg(test)]
+mod tests_pathtype;
 #[cfg(test)]
 mod tests_pdfoutput;
 #[cfg(test)]
@@ -96,9 +106,17 @@ mod tests_recolor;
 #[cfg(test)]
 mod tests_recovery;
 #[cfg(test)]
+mod tests_removeanchors;
+#[cfg(test)]
 mod tests_save;
 #[cfg(test)]
 mod tests_saveext;
+#[cfg(test)]
+mod tests_screenmode;
+#[cfg(test)]
+mod tests_scrub;
+#[cfg(test)]
+mod tests_selectall;
 #[cfg(test)]
 mod tests_slices;
 #[cfg(test)]
@@ -111,6 +129,8 @@ mod tests_synthetic;
 mod tests_sysclip;
 #[cfg(test)]
 mod tests_sysclip_emf;
+#[cfg(test)]
+mod tests_sysclip_probe;
 #[cfg(test)]
 mod tests_transparencygrid;
 #[cfg(test)]
@@ -125,7 +145,7 @@ use vectorcraft_engine::{Session, ViewInfo};
 
 pub use control::{ControlRequest, ControlResponse};
 pub use state::{UiState, View};
-pub use sysclip::SystemClipboard;
+pub use sysclip::{ClipboardProbeFactory, SystemClipboard};
 
 /// What a file dialog shows: a suggested file name (save dialogs), the folder to start in and the
 /// file-type filters.
@@ -193,6 +213,10 @@ pub struct Services {
     /// Paste takes SVG, PDF, text and bitmaps from other apps. Without it, SVG text only (through
     /// egui and `clipboard_read`).
     pub system_clipboard: Option<Box<dyn SystemClipboard>>,
+    /// A second system-clipboard handle, for checking whether Paste has something to take on a
+    /// background thread (Linux: an X11 clipboard owner that never answers would freeze the UI).
+    /// Taken on the first frame. Without it the check runs on the UI thread.
+    pub clipboard_probe: Option<ClipboardProbeFactory>,
     /// File → Show in Folder: select a file in the system file manager (desktop).
     pub reveal: Option<RevealFn>,
     /// Write a file from any thread (desktop): lets Background Save and Export write off the UI
@@ -225,6 +249,8 @@ pub struct CanvasCache {
     pub print_tiling: Option<PrintTilingCache>,
     /// [`VectorcraftApp::selection_box`] for (document uid, revision, Use Preview Bounds).
     pub selection_box: Option<((u64, u64, bool), Option<vectorcraft_doc::OrientedBox>)>,
+    /// The tools' cursors as OS cursor bitmaps.
+    pub cursors: cursors::Images,
 }
 
 /// [`CanvasCache::slices`]: the layout of the slices of (document uid, revision).
@@ -247,6 +273,8 @@ pub struct CacheKey {
     pub ppp: f32,
     pub hidden: Vec<u64>,
     pub rot: f64,
+    /// General › Anti-aliased Artwork.
+    pub anti_alias: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -280,6 +308,9 @@ pub struct VectorcraftApp {
     pub synthetic: Vec<egui::Event>,
     styled: bool,
     fonts_ready: bool,
+    /// The egui context the UI's textures were uploaded to (0: none yet; see
+    /// [`Self::adopt_context`]).
+    context: u64,
     /// Installed fonts added to the UI's for characters its own fonts lack (CJK names…).
     ui_fonts: ui_fonts::UiFonts,
     frame: u64,
@@ -289,10 +320,11 @@ pub struct VectorcraftApp {
     /// Hover position in document coordinates.
     pub hover_doc: Option<vectorcraft_geom::Point>,
     /// System clipboard: SVG to publish next frame, the last SVG we published (so pasting it back
-    /// uses the lossless internal clipboard) and text that arrived with a Paste event.
+    /// uses the lossless internal clipboard) and what came with a paste (a Paste event's text, a
+    /// picture or file the host read: [`Self::paste_from_host`]).
     clipboard_out: Option<String>,
     clipboard_published: Option<String>,
-    pub(crate) clipboard_in: Option<String>,
+    pub(crate) clipboard_in: Option<vectorcraft_engine::cmd::clipboard::Flavour>,
     /// A URL to open through egui next frame (when the host has no `open_url` service).
     pending_url: Option<String>,
     /// Windows and Linux: the window has no OS decorations, so the app bar is the title bar (drag,
@@ -307,8 +339,11 @@ pub struct VectorcraftApp {
     /// (SVG without a `system_clipboard`) while the internal clipboard is empty. It enables the
     /// Paste menu items.
     pub(crate) system_paste: bool,
-    /// When `system_paste` was last checked (app time, s; at most once per frame).
+    /// When `system_paste` was last checked in line (app time, s; at most once per frame).
     system_paste_at: f64,
+    /// The thread that checks the system clipboard for `system_paste` instead
+    /// ([`Services::clipboard_probe`]).
+    clipboard_probe: Option<clipboard_probe::Probe>,
     /// Keyboard pastes of something other than text (see [`shortcuts::PasteChord`]).
     pub(crate) paste_chord: shortcuts::PasteChord,
     /// Saves and exports running in the background (Preferences → File Handling).
@@ -324,6 +359,9 @@ pub struct VectorcraftApp {
     pub(crate) ime_marked: Option<String>,
     /// The IME must drop its marked text (see [`Self::take_ime_discard`]).
     pub(crate) ime_discard: bool,
+    /// A numeric field is being scrubbed: the document's edits meanwhile are one undo step
+    /// ([`scrub::begin_frame`]).
+    scrub_group: bool,
 }
 
 /// Seconds between two looks at the system clipboard for [`VectorcraftApp::system_paste`].
@@ -352,6 +390,7 @@ impl VectorcraftApp {
                 slices: None,
                 print_tiling: None,
                 selection_box: None,
+                cursors: Default::default(),
             },
             perf: Perf::default(),
             integrated_titlebar: false,
@@ -369,6 +408,7 @@ impl VectorcraftApp {
             synthetic: vec![],
             styled: false,
             fonts_ready: false,
+            context: 0,
             ui_fonts: Default::default(),
             frame: 0,
             last_time: 0.0,
@@ -379,6 +419,7 @@ impl VectorcraftApp {
             place: Default::default(),
             system_paste: false,
             system_paste_at: f64::NEG_INFINITY,
+            clipboard_probe: None,
             paste_chord: Default::default(),
             background: Default::default(),
             recovery: Default::default(),
@@ -386,6 +427,7 @@ impl VectorcraftApp {
             synthetic_modifiers: false,
             ime_marked: None,
             ime_discard: false,
+            scrub_group: false,
         }
     }
 
@@ -415,6 +457,7 @@ impl VectorcraftApp {
             zoom: self.view().map(|v| v.zoom).unwrap_or(1.0),
             outline: self.ui.view.outline,
             smart_guides: self.ui.view.smart_guides,
+            guides: self.ui.view.guides,
             snap_to_grid: self.ui.view.snap_to_grid,
             snap_to_pixel: self.ui.view.snap_to_pixel,
             show_bbox: self.ui.view.bounding_box,
@@ -485,7 +528,7 @@ impl VectorcraftApp {
                     let r = &mut self.ui.recent_fonts;
                     r.retain(|f| f != font);
                     r.insert(0, font.to_string());
-                    r.truncate(10);
+                    r.truncate(MAX_RECENT_FONTS);
                 }
             }
         }
@@ -521,9 +564,6 @@ impl VectorcraftApp {
             && let Some(slot) = self.ui.group_tool.get_mut(g)
         {
             *slot = id.to_string();
-        }
-        if canvas::is_selection_tool(id) {
-            self.ui.last_selection_tool = id.to_string();
         }
         toolbar::remember(self, id);
         self.ui.flyout = None;
@@ -640,7 +680,17 @@ pub fn now_ms() -> f64 {
     }
 }
 
+/// The most fonts Type › Recent Fonts lists (Preferences › Type › Number of Recent Fonts).
+pub const MAX_RECENT_FONTS: usize = 15;
+
 impl VectorcraftApp {
+    /// Type › Recent Fonts: the fonts used last, newest first, as many as Preferences › Type ›
+    /// Number of Recent Fonts says.
+    pub fn recent_fonts(&self) -> &[String] {
+        let n = usize::try_from(self.session.prefs.recent_fonts_count).unwrap_or(MAX_RECENT_FONTS).clamp(1, MAX_RECENT_FONTS);
+        self.ui.recent_fonts.get(..n).unwrap_or(&self.ui.recent_fonts)
+    }
+
     /// The selection's bounding box, rotated with rotated objects ([`Session::transform_box`]). The
     /// canvas and the transform fields read it every frame: it is measured once per revision.
     pub fn selection_box(&mut self) -> Option<vectorcraft_doc::OrientedBox> {
@@ -678,6 +728,7 @@ impl VectorcraftApp {
 
     fn logic_frame(&mut self, ctx: &egui::Context) {
         i18n::set_current(self.ui_language());
+        self.adopt_context(ctx);
         if !self.styled {
             theme::install_fonts(ctx);
             theme::apply(ctx, self.ui.brightness);
@@ -694,11 +745,20 @@ impl VectorcraftApp {
         }
         self.last_time = now;
         self.sync_views();
-        // Read the system clipboard only when that alone decides whether Paste is enabled, and at
-        // most a few times a second (opening it locks it against other apps on some systems).
-        if !(0.0..SYSTEM_CLIPBOARD_POLL).contains(&(now - self.system_paste_at)) {
+        // Read the system clipboard only when that alone decides whether Paste is enabled. A
+        // background thread reads it where the host installs one (an unresponsive owner must never
+        // stall the frame loop); otherwise, or once that thread is gone, it is read here, at most a
+        // few times a second (opening it locks it against other apps on some systems).
+        let wanted = self.session.clipboard.is_empty() && self.session.active().is_some();
+        if let Some(make) = self.services.clipboard_probe.take() {
+            self.clipboard_probe = clipboard_probe::Probe::start(make, ctx.clone());
+        }
+        if let Some(pasteable) = self.clipboard_probe.as_mut().and_then(|p| p.pasteable(wanted)) {
+            self.system_paste = pasteable;
+        } else if !(0.0..SYSTEM_CLIPBOARD_POLL).contains(&(now - self.system_paste_at)) {
+            self.clipboard_probe = None;
             self.system_paste_at = now;
-            self.system_paste = self.session.clipboard.is_empty() && self.session.active().is_some() && self.system_clipboard_pasteable();
+            self.system_paste = wanted && self.system_clipboard_pasteable();
         }
         background::poll(self);
         if !self.background.jobs.is_empty() {
@@ -746,36 +806,48 @@ impl VectorcraftApp {
         self.take_dropped_files(ctx);
     }
 
-    /// Files dropped on the window: placed where they were dropped on the canvas, else opened.
+    /// Files dropped on the window: documents opened, pictures and text placed on the canvas
+    /// ([`Self::drop_target`]).
     #[cfg(not(target_arch = "wasm32"))]
     fn take_dropped_files(&mut self, ctx: &egui::Context) {
-        let (dropped, pos, shift) = ctx.input(|i| (i.raw.dropped_files.clone(), i.pointer.latest_pos(), i.modifiers.shift));
+        let (dropped, shift) = ctx.input(|i| (i.raw.dropped_files.clone(), i.modifiers.shift));
         if dropped.is_empty() {
             return;
         }
-        let target = self.drop_target(pos, shift);
+        let pos = place::drag_pos(ctx);
         let mut files = vec![];
         for f in dropped {
             let path = Some(f.path().to_string_lossy().to_string()).filter(|s| !s.is_empty());
             let name = path.as_deref().map_or_else(|| "dropped".into(), vectorcraft_engine::cmd::fileio::file_name);
+            let target = self.drop_target(&name, pos, shift);
             // A file placed by its path is read by the engine.
             let bytes = if path.is_some() && target != place::DropTarget::Open { Ok(vec![]) } else { f.bytes() };
             match bytes {
-                Ok(b) => files.push((name, path, b)),
+                Ok(b) => files.push((target, (name, path, b))),
                 Err(e) => self.status(format!("Couldn't read {name}: {e}")),
             }
         }
-        place::drop_files(self, files, target);
+        place::drop_files(self, files);
     }
 
-    /// Inject synthetic events (one press/release step per frame). Handlers read the modifiers
-    /// egui holds (`i.modifiers`), so a synthetic key or button holds its own for the frames it
-    /// spans (a drag's moves included); the keyboard's come back after.
+    /// Fonts installed or removed while the app was in the background are listed when it comes
+    /// back (Refresh Font List by itself): a look at the font folders, a scan only when they changed.
+    fn refresh_installed_fonts(&mut self) {
+        if vectorcraft_text::FontDb::global().installed_fonts_changed() {
+            // A failure shows in the status bar, as the menu item's does.
+            let _ = self.run("text.rescanFonts", json!({}));
+        }
+    }
+
+    /// Inject synthetic events (one press/release step or wheel turn per frame). Handlers read the
+    /// modifiers egui holds (`i.modifiers`), so a synthetic key, button or wheel turn holds its own
+    /// for the frames it spans (a drag's moves included); the keyboard's come back after.
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
         for e in &raw.events {
             match e {
                 egui::Event::ModifiersChanged(m) => self.host_modifiers = *m,
                 egui::Event::WindowFocused(false) => self.host_modifiers = egui::Modifiers::NONE,
+                egui::Event::WindowFocused(true) => self.refresh_installed_fonts(),
                 _ => {}
             }
         }
@@ -788,7 +860,7 @@ impl VectorcraftApp {
         // Pointer events go one per frame so egui sees presses, drags and releases as real input;
         // keyboard sequences go up to the key release.
         let n = match first {
-            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } => 1,
+            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } => 1,
             _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
         };
         if let egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. } = first {
@@ -799,7 +871,9 @@ impl VectorcraftApp {
         let held = now
             .iter()
             .find_map(|e| match e {
-                egui::Event::Key { modifiers, .. } | egui::Event::PointerButton { modifiers, .. } => Some(*modifiers),
+                egui::Event::Key { modifiers, .. } | egui::Event::PointerButton { modifiers, .. } | egui::Event::MouseWheel { modifiers, .. } => {
+                    Some(*modifiers)
+                }
                 _ => None,
             })
             .or_else(|| match later.iter().find(|e| matches!(e, egui::Event::PointerButton { .. })) {
@@ -831,6 +905,9 @@ impl VectorcraftApp {
             return;
         }
         let t0 = now_ms();
+        scrub::begin_frame(self, &ctx);
+        font_menu::end_stale_preview(self, &ctx);
+        floating::track(self, &ctx);
         let t = theme::Tokens::get(&ctx);
         if self.ui.screen_mode < 2 {
             chrome::app_bar(self, ui);
@@ -855,6 +932,7 @@ impl VectorcraftApp {
             canvas::show(self, ui);
         });
         dock::floating_panel(self, &ctx);
+        floating::show(self, &ctx);
         panels::library_panel::show_window(self, &ctx);
         dialogs::show(self, &ctx);
         palette::show(self, &ctx);
@@ -862,6 +940,7 @@ impl VectorcraftApp {
             titlebar::resize_zones(ui);
         }
         self.ui_fonts.frame(&ctx);
+        scrub::end_frame(self, &ctx);
         self.perf.frame_ms = now_ms() - t0;
         let _ = json!(null);
     }

@@ -79,12 +79,23 @@ pub struct Interaction {
     pub doc: Arc<Document>,
     pub selection: Selection,
     pub preview: Option<(String, Value)>,
-    /// Per-document state restored on cancel (current layer, isolation).
+    /// Per-document state restored on cancel (current layer, highlighted Layers panel rows,
+    /// isolation).
     pub active_layer: Option<NodeId>,
+    pub layer_rows: Vec<NodeId>,
     pub isolation: Option<NodeId>,
     /// The perspective transform the previews make (`perspective.transform` params): Transform
     /// Again repeats it once the drag is committed.
     pub perspective_again: Option<Value>,
+}
+
+/// An open undo group ([`Session::begin_undo_group`]): the edits made in it are one undo step.
+#[derive(Clone, Debug)]
+pub struct UndoGroup {
+    /// The document before the group's first edit, as the undo step that edit recorded keeps it.
+    first: Option<Arc<Document>>,
+    /// The journal's length when the group began: a cancelled group drops the entries after it.
+    journal: usize,
 }
 
 /// Per-document editing state.
@@ -102,9 +113,16 @@ pub struct DocState {
     saved_doc: Arc<Document>,
     /// The layer new art goes into (the "current layer" in the Layers panel).
     pub active_layer: Option<NodeId>,
+    /// The rows highlighted in the Layers panel (layers, sublayers, groups or objects, in the order
+    /// they were clicked): what the panel's Duplicate, Delete, Merge, Options… and similar act on.
+    /// Panel state, not art selection: not saved, not undoable (`layer.setCurrent`,
+    /// `layer.highlight`).
+    pub layer_rows: Vec<NodeId>,
     /// Isolation mode container.
     pub isolation: Option<NodeId>,
     pub interaction: Option<Interaction>,
+    /// Edits made while this is open are one undo step (a scrubbed numeric field).
+    pub undo_group: Option<UndoGroup>,
     /// For Object → Transform → Transform Again (⌘D).
     pub last_transform: Option<(Affine, bool)>,
     /// Selection saved by Select → Reselect.
@@ -156,8 +174,10 @@ impl DocState {
             path,
             revision: 1,
             active_layer,
+            layer_rows: vec![],
             isolation: None,
             interaction: None,
+            undo_group: None,
             last_transform: None,
             last_selection_cmd: None,
             uid: NEXT_DOC_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -189,10 +209,25 @@ impl DocState {
     /// Keep what interaction `it` (taken from this document) changed, as one undo step.
     pub(crate) fn keep_interaction(&mut self, it: Interaction) {
         if !Arc::ptr_eq(&it.doc, &self.doc) {
-            self.history.undo.push(HistoryEntry { label: it.label, doc: it.doc, selection: it.selection });
-            self.history.redo.clear();
+            self.push_undo(HistoryEntry { label: it.label, doc: it.doc, selection: it.selection });
             self.revision += 1;
         }
+    }
+    /// Record undo step `e` (the document before an edit). In an undo group only the group's first
+    /// edit records one: the edits after it extend that step.
+    fn push_undo(&mut self, e: HistoryEntry) {
+        if let Some(g) = &mut self.undo_group {
+            let recorded = |first: &Arc<Document>| self.history.undo.last().is_some_and(|l| Arc::ptr_eq(&l.doc, first));
+            if g.first.as_ref().is_some_and(recorded) {
+                return;
+            }
+            g.first = Some(e.doc.clone());
+        }
+        self.history.undo.push(e);
+        if self.history.undo.len() > self.history.limit {
+            self.history.undo.remove(0);
+        }
+        self.history.redo.clear();
     }
     /// End the interaction in progress, undoing what it changed.
     pub(crate) fn undo_interaction(&mut self) {
@@ -200,6 +235,7 @@ impl DocState {
             self.doc = it.doc;
             self.selection = it.selection;
             self.active_layer = it.active_layer;
+            self.layer_rows = it.layer_rows;
             self.isolation = it.isolation;
             self.revision += 1;
         }
@@ -236,7 +272,13 @@ impl DocState {
         {
             return Some(i);
         }
-        self.active_layer.filter(|l| self.doc.node(*l).is_some_and(|n| n.is_layer() && !n.locked)).or_else(|| self.doc.default_layer())
+        // A sublayer takes new art only while it and the layers around it are shown and unlocked.
+        self.active_layer.filter(|l| self.doc.node(*l).is_some_and(|n| n.is_layer()) && self.doc.is_editable(*l)).or_else(|| self.doc.default_layer())
+    }
+    /// The highlighted Layers panel rows that still exist (ids are reused after undo, so a
+    /// remembered row must still be in the document).
+    pub fn highlighted_rows(&self) -> Vec<NodeId> {
+        self.layer_rows.iter().copied().filter(|id| self.doc.node(*id).is_some()).collect()
     }
     /// The object whose opacity mask View Opacity Mask shows ([`DocState::mask_view`]): only while
     /// its mask is being edited, so leaving editing by any route (undo, deleting the object) ends it.
@@ -278,7 +320,9 @@ fn strip_replay_only(id: &str, p: &mut Value) {
 /// have finite, in-range geometry, so saved files always reload and renderers never see NaN/∞.
 fn doc_sane(d: &Document, sel: &Selection) -> bool {
     let ok = |r: vectorcraft_geom::Rect| [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD);
-    d.artboards.iter().all(|a| ok(a.rect)) && sel.objects.iter().all(|id| d.node(*id).and_then(|n| n.geometric_bounds()).is_none_or(ok))
+    d.artboards.iter().all(|a| ok(a.rect))
+        && d.guides.iter().all(|g| g.pos.is_finite() && g.pos.abs() <= MAX_COORD)
+        && sel.objects.iter().all(|id| d.node(*id).and_then(|n| n.geometric_bounds()).is_none_or(ok))
 }
 
 /// Where new art goes (Illustrator's drawing modes, Shift+D cycles).
@@ -315,6 +359,8 @@ pub struct Prefs {
     /// Scale Strokes & Effects.
     pub scale_strokes: bool,
     pub zoom_with_mouse_wheel: bool,
+    /// A horizontal drag on a numeric field or its label steps its value (#400).
+    pub scrub_numeric_fields: bool,
     /// Offset for Paste / duplicate (Illustrator pastes to the view centre; we offset by this).
     pub paste_offset: f64,
     // Selection & Anchor Display
@@ -351,6 +397,8 @@ pub struct Prefs {
     pub units_stroke: String,
     pub units_type: String,
     pub units_asian_type: String,
+    /// Numbers Without Units Are Points: a number typed with no unit into a length field in picas
+    /// is read in points (on by default; the reference app dims it unless a unit is Picas).
     pub numbers_without_units_are_points: bool,
     pub identify_objects_by: String,
     // Guides & Grid
@@ -398,10 +446,13 @@ pub struct Prefs {
     pub gpu_performance: bool,
     pub animated_zoom: bool,
     /// Which graphics processor the desktop app asks for at startup (it takes effect after a
-    /// restart): `powerSaving` (the integrated GPU on hybrid-graphics laptops) or `highPerformance`
-    /// (the discrete one). The canvas is rasterized on the CPU and only composited on the GPU, so
-    /// the integrated GPU is plenty; presenting from the discrete GPU through the integrated one
-    /// made some hybrid laptops flicker (#306). Single-GPU machines are unaffected.
+    /// restart): `automatic`, `lowPower` (the integrated GPU on hybrid-graphics machines) or
+    /// `highPerformance` (the discrete one). The canvas is rasterized on the CPU and only
+    /// composited on the GPU, so the integrated GPU is plenty; presenting from the discrete GPU
+    /// through the integrated one made some hybrid laptops flicker (#306). Automatic is power
+    /// saving on Windows and macOS and the system's default GPU elsewhere, the one the desktop
+    /// runs on: a Wayland compositor may not show frames from another GPU (#502). Single-GPU
+    /// machines are unaffected.
     pub gpu_preference: String,
     pub history_states: u32,
     pub real_time_drawing: bool,
@@ -535,6 +586,7 @@ impl Default for Prefs {
             scale_corners: false,
             scale_strokes: false,
             zoom_with_mouse_wheel: false,
+            scrub_numeric_fields: true,
             paste_offset: 10.0,
             selection_tolerance: 3.0,
             object_selection_by_path_only: false,
@@ -577,7 +629,7 @@ impl Default for Prefs {
             grid_subdivisions: 8,
             grids_in_back: true,
             show_pixel_grid: true,
-            smart_guide_color: s("#ff4af0"),
+            smart_guide_color: s("#ff3dfc"),
             alignment_guides: true,
             object_highlighting: true,
             transform_tools_guides: true,
@@ -634,7 +686,7 @@ impl Default for Prefs {
             interface_language: s("auto"),
             gpu_performance: true,
             animated_zoom: true,
-            gpu_preference: s("powerSaving"),
+            gpu_preference: s("automatic"),
             history_states: 500,
             real_time_drawing: true,
             render_threads: -1,
@@ -699,6 +751,12 @@ pub struct Session {
     /// Executed commands (for actions and debugging).
     pub journal: Vec<(String, Value)>,
     pub(crate) tool: Box<dyn Tool>,
+    /// While Cmd lends `tool` (a selection tool) for a drag: the tool it was lent to, which comes
+    /// back as it was at the release ([`Session::pointer`]).
+    pub(crate) lender: Option<Box<dyn Tool>>,
+    /// The selection tool chosen last (Selection, Direct Selection or Group Selection): the one Cmd
+    /// lends the other tools. None until one is chosen.
+    pub(crate) last_selection_tool: Option<&'static str>,
     pub(crate) last_view: ViewInfo,
     depth: u32,
     /// Set when the active tool panicked (see [`guard`]); reported by the next tool event.
@@ -757,6 +815,8 @@ pub struct Session {
     pub(crate) liquify_stroke: Option<Box<cmd::distortcmds::LiquifyStroke>>,
     /// A press on the Plane Switching Widget is under way: its drag and release are the widget's.
     pub(crate) plane_widget_press: bool,
+    /// A guide being dragged out of a ruler ([`Session::ruler_guide`]).
+    pub(crate) ruler_guide: Option<vectorcraft_tools::rulerguide::NewGuide>,
 }
 
 impl Default for Session {
@@ -776,6 +836,8 @@ impl Session {
             clipboard: Clipboard::default(),
             journal: vec![],
             tool: vectorcraft_tools::create("selection"),
+            lender: None,
+            last_selection_tool: None,
             last_view: ViewInfo::default(),
             depth: 0,
             tool_panic: None,
@@ -801,6 +863,7 @@ impl Session {
             envelope_defaults: None,
             liquify_stroke: None,
             plane_widget_press: false,
+            ruler_guide: None,
         }
     }
 
@@ -833,6 +896,8 @@ impl Session {
             return;
         }
         let view = self.last_view;
+        // The switch goes on whatever the lent tool's last actions did, as for the deactivation.
+        let _ = self.give_back_tool(view);
         let acts = self.with_tool_cx(view, |t, cx| t.deactivate(cx));
         let _ = self.apply_actions(acts);
         // A batch leaves its interaction open in the document it leaves, to keep or roll back with
@@ -1079,11 +1144,7 @@ impl Session {
                 st.selection.prune(&st.doc);
                 st.revision += 1;
                 if st.interaction.is_none() {
-                    st.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection: before_sel });
-                    if st.history.undo.len() > st.history.limit {
-                        st.history.undo.remove(0);
-                    }
-                    st.history.redo.clear();
+                    st.push_undo(HistoryEntry { label: label.to_string(), doc: before, selection: before_sel });
                 }
                 Ok(v)
             }
@@ -1099,8 +1160,18 @@ impl Session {
     pub fn select(&mut self, f: impl FnOnce(&Document, &mut Selection)) -> Result<()> {
         self.active_appearance_item = None;
         let st = self.doc_mut()?;
+        let before = st.selection.objects.clone();
         f(&st.doc, &mut st.selection);
         st.selection.prune(&st.doc);
+        // Selecting art makes its layer (or sublayer) the current one, as in the Layers panel of
+        // the reference app: new art then goes beside it.
+        if st.selection.objects != before
+            && let Some(layer) = st.selection.objects.last().and_then(|id| st.doc.layer_containing(*id)).filter(|l| st.doc.is_editable(*l))
+            && st.active_layer != Some(layer)
+        {
+            st.active_layer = Some(layer);
+            st.layer_rows.clear();
+        }
         st.revision += 1;
         // Puppet Warp pins belong to the art they were placed on: another selection starts afresh.
         if st.doc.puppet.as_ref().is_some_and(|p| p.ids != st.selection.objects) {
@@ -1122,6 +1193,7 @@ impl Session {
             selection: st.selection.clone(),
             preview: None,
             active_layer: st.active_layer,
+            layer_rows: st.layer_rows.clone(),
             isolation: st.isolation,
             perspective_again: None,
         });
@@ -1184,6 +1256,44 @@ impl Session {
 
     pub fn in_interaction(&self) -> bool {
         self.active().is_some_and(|d| d.interaction.is_some())
+    }
+
+    // ---------- undo groups (scrubbed numeric fields) ----------
+
+    /// Open an undo group in the active document: until [`Session::end_undo_group`], the edits
+    /// made there (commands, committed interactions) are one undo step. A scrubbed numeric field
+    /// applies each value it passes as its own command, as a typed value is applied; the drag is
+    /// one step.
+    pub fn begin_undo_group(&mut self) {
+        let journal = self.journal.len();
+        if let Some(st) = self.active_mut()
+            && st.undo_group.is_none()
+        {
+            st.undo_group = Some(UndoGroup { first: None, journal });
+        }
+    }
+
+    /// Close the open undo groups: their edits stay one undo step or, `cancel`led (Escape), are
+    /// undone and dropped from the journal.
+    pub fn end_undo_group(&mut self, cancel: bool) {
+        let mut journal = None;
+        for st in &mut self.docs {
+            let Some(g) = st.undo_group.take() else { continue };
+            // Only while the group's step is still the newest one.
+            if cancel
+                && let Some(first) = g.first
+                && st.history.undo.last().is_some_and(|e| Arc::ptr_eq(&e.doc, &first))
+                && let Some(e) = st.history.undo.pop()
+            {
+                st.doc = e.doc;
+                st.selection = e.selection;
+                st.revision += 1;
+                journal = Some(g.journal);
+            }
+        }
+        if let Some(len) = journal {
+            self.journal.truncate(len);
+        }
     }
 
     /// Commands with enablement (for menus, palette, MCP `list_commands`).
@@ -1297,6 +1407,8 @@ mod tests_labspots;
 #[cfg(test)]
 mod tests_layerclip;
 #[cfg(test)]
+mod tests_layers;
+#[cfg(test)]
 mod tests_linked_stops;
 #[cfg(test)]
 mod tests_links;
@@ -1306,6 +1418,8 @@ mod tests_linkspanel;
 mod tests_liquify;
 #[cfg(test)]
 mod tests_live;
+#[cfg(test)]
+mod tests_livecorners;
 #[cfg(test)]
 mod tests_maskview;
 #[cfg(test)]
@@ -1332,6 +1446,8 @@ mod tests_paintproxy;
 mod tests_panelcmds;
 #[cfg(test)]
 mod tests_pathops;
+#[cfg(test)]
+mod tests_pathtype;
 #[cfg(test)]
 mod tests_pattern;
 #[cfg(test)]

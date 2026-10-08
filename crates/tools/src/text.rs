@@ -11,7 +11,9 @@
 //! undo step per typing session: the tool keeps the styled runs locally and previews a single
 //! `text.editRange` (the changed span, with its styled runs) against the session snapshot.
 //! Styling a selected range goes through `text.setRangeStyle` (the Character panel reads the
-//! selection from [`Tool::options`]).
+//! selection from [`Tool::options`]); Alt+arrows step it by the Preferences › Type increments
+//! (`type.step`). New type starts with placeholder text, selected, when Fill New Type Objects With
+//! Placeholder Text is on.
 //!
 //! IME: the marked text of a composition is part of the typing session (so it lays out in place),
 //! underlined, until the IME commits it (it then goes through [`Tool::text_input`]) or clears it.
@@ -228,7 +230,7 @@ impl TypeTool {
 
     /// Path under `p` for the Area Type / Type on a Path tools.
     fn path_at(cx: &ToolContext, p: Point, closed: bool) -> Option<NodeId> {
-        let h = hit_test(cx.doc, p, vectorcraft_doc::hit::HitOptions { tol: cx.tol(4.0), outline: true, path_only: false })?;
+        let h = hit_test(cx.doc, p, vectorcraft_doc::hit::HitOptions { tol: cx.tol(4.0), outline: true, ..Default::default() })?;
         match &cx.doc.node(h.leaf)?.kind {
             NodeKind::Path { path, .. } if !closed || path.is_closed() => Some(h.leaf),
             _ => None,
@@ -236,9 +238,10 @@ impl TypeTool {
     }
 
     /// Start editing the type under `p` with the caret there → the actions (ending the previous
-    /// edit, selecting the type); None when no type is under `p`.
+    /// edit, selecting the type); None when no type is under `p`. A click among the characters
+    /// edits them, whatever Type Object Selection by Path Only says.
     fn edit_at(&mut self, cx: &ToolContext, p: Point) -> Option<Vec<Action>> {
-        let h = hit_test(cx.doc, p, cx.hit_options())?;
+        let h = hit_test(cx.doc, p, vectorcraft_doc::hit::HitOptions { type_path_only: false, ..cx.hit_options() })?;
         let Some(NodeKind::Text(t)) = cx.doc.node(h.leaf).map(|n| &n.kind) else { return None };
         let lay = self.layout(t);
         let byte = vectorcraft_text::hit_byte(&lay, t.xf.inverse() * p);
@@ -263,7 +266,7 @@ impl TypeTool {
                 let mode = if on_path { "onPath" } else { "area" };
                 out.push(Action::Exec(
                     "text.createInPath".into(),
-                    json!({"path": pid.0, "mode": mode, "text": "", "at": [start.x, start.y], "vertical": self.vertical}),
+                    json!({"path": pid.0, "mode": mode, "text": "", "at": [start.x, start.y], "vertical": self.vertical, "placeholder": cx.placeholder_text}),
                 ));
                 out.push(Action::Notify("text.editNew".into()));
                 return out;
@@ -275,6 +278,7 @@ impl TypeTool {
             None => json!({"x": start.x, "y": start.y, "text": ""}),
         };
         params["vertical"] = json!(self.vertical);
+        params["placeholder"] = json!(cx.placeholder_text);
         out.push(Action::Exec("text.create".into(), params));
         out.push(Action::Notify("text.editNew".into()));
         out
@@ -303,6 +307,18 @@ impl TypeTool {
 
 /// Byte range in `s` of the characters `r` (IME ranges count characters; carets count bytes).
 /// `None` when `r` runs past the end of `s` or backwards.
+/// The `type.step` an Alt+arrow asks for, by one step: ←/→ kerning at a `caret`, else tracking;
+/// ↑/↓ leading (down opens it up); Shift+↑/↓ baseline shift.
+fn step_key(key: ToolKey, shift: bool, caret: bool) -> Option<(&'static str, f64)> {
+    let sign = |up: bool| if up { 1.0 } else { -1.0 };
+    Some(match (key, shift) {
+        (ToolKey::Left | ToolKey::Right, false) => (if caret { "kerning" } else { "tracking" }, sign(key == ToolKey::Right)),
+        (ToolKey::Up | ToolKey::Down, false) => ("leading", sign(key == ToolKey::Down)),
+        (ToolKey::Up | ToolKey::Down, true) => ("baselineShift", sign(key == ToolKey::Up)),
+        _ => return None,
+    })
+}
+
 fn char_range_to_bytes(s: &str, r: Range<usize>) -> Option<Range<usize>> {
     let byte = |c: usize| if c == s.chars().count() { Some(s.len()) } else { s.char_indices().nth(c).map(|(i, _)| i) };
     let (a, b) = (byte(r.start)?, byte(r.end)?);
@@ -454,6 +470,16 @@ impl Tool for TypeTool {
         self.caret = self.caret.min(len);
         self.anchor = self.anchor.min(len);
         let (a, b) = self.sel();
+        // Alt+arrows step the type by the Preferences › Type increments (Cmd/Ctrl too: five steps).
+        if mods.alt
+            && let Some(id) = self.editing
+            && let Some((attribute, by)) = step_key(key, mods.shift, a == b)
+        {
+            let mut out = self.commit();
+            let by = if mods.cmd { by * 5.0 } else { by };
+            out.push(Action::Exec("type.step".into(), json!({"id": id.0, "start": a, "end": b, "attribute": attribute, "by": by})));
+            return out;
+        }
         let word = mods.cmd || mods.alt;
         let lay = self.layout(&t);
         let key = if lay.vertical {
@@ -486,21 +512,41 @@ impl Tool for TypeTool {
             }
             ToolKey::Left => {
                 let to = if a != b && !mods.shift {
-                    a
+                    if lay.glyphs.iter().any(|g| g.rtl)
+                        && vectorcraft_text::caret_position(&lay, a).0.x > vectorcraft_text::caret_position(&lay, b).0.x
+                    {
+                        b
+                    } else {
+                        a
+                    }
                 } else if word {
                     edit::prev_word(&text, self.caret)
                 } else {
-                    edit::prev_char(&text, self.caret)
+                    if lay.glyphs.iter().any(|g| g.rtl) {
+                        vectorcraft_text::caret_horizontal(&lay, self.caret, false)
+                    } else {
+                        edit::prev_char(&text, self.caret)
+                    }
                 };
                 self.move_to(to, mods.shift)
             }
             ToolKey::Right => {
                 let to = if a != b && !mods.shift {
-                    b
+                    if lay.glyphs.iter().any(|g| g.rtl)
+                        && vectorcraft_text::caret_position(&lay, a).0.x > vectorcraft_text::caret_position(&lay, b).0.x
+                    {
+                        a
+                    } else {
+                        b
+                    }
                 } else if word {
                     edit::next_word(&text, self.caret)
                 } else {
-                    edit::next_char(&text, self.caret)
+                    if lay.glyphs.iter().any(|g| g.rtl) {
+                        vectorcraft_text::caret_horizontal(&lay, self.caret, true)
+                    } else {
+                        edit::next_char(&text, self.caret)
+                    }
                 };
                 self.move_to(to, mods.shift)
             }
@@ -603,7 +649,10 @@ impl Tool for TypeTool {
             && let Some(id) = cx.selection.objects.first().copied()
         {
             self.start_editing(id, 0);
-            self.fresh = Self::text(cx, id).filter(|t| matches!(t.kind, TextKind::Point)).map(|_| id);
+            let t = Self::text(cx, id);
+            self.fresh = t.filter(|t| matches!(t.kind, TextKind::Point)).map(|_| id);
+            // Placeholder text comes selected: typing replaces it.
+            self.caret = t.map_or(0, |t| edit::runs_len(&t.runs));
         }
     }
     /// `{editing, start, end, caret, anchor, typing, composing}` — the Character panel styles

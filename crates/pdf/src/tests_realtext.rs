@@ -96,7 +96,7 @@ fn real_text_lands_within_half_a_point_of_the_outlines() {
         TextRun { text: " ok".into(), style: CharStyle { rotation: 20.0, ..style(20.0) } },
     ];
     let mut on_path = TextObject::point(Point::ZERO, "along the arc", style(18.0));
-    on_path.kind = TextKind::OnPath { path: arc(), start: 0.0 };
+    on_path.kind = TextKind::OnPath { path: arc(), start: 0.0, end: None };
     on_path.xf = Affine::IDENTITY;
     for t in [plain, turned, mixed, on_path] {
         let what = t.plain_text();
@@ -210,4 +210,21 @@ fn pdf_a_takes_real_text() {
     let settings: PdfSettings = serde_json::from_value(json!({"standard": "pdfA2b", "advanced": {"outlineText": false}})).unwrap();
     let bytes = export(&d, &PdfOptions { settings, created: Some(0), ..Default::default() }).unwrap();
     assert_eq!(texts(&import_as(&bytes, TextAs::Text)), ["Archive"]);
+}
+
+/// A named instance comes back as live type in that style (not the default instance's).
+#[test]
+fn a_variable_font_instance_comes_back_in_its_own_style() {
+    use vectorcraft_text::test_fonts::{VARIABLE_CHARS, VARIABLE_FAMILY, variable_font};
+    FontDb::global().add_font(variable_font().unwrap());
+    let st = CharStyle { font_family: VARIABLE_FAMILY.into(), font_style: "Bold".into(), ..style(48.0) };
+    let d = doc(vec![TextObject::point(Point::new(20.0, 80.0), VARIABLE_CHARS, st)]);
+    let back = crate::import_with_report(&pdf(&d, false).bytes, &ImportOptions { text_as: TextAs::Text, ..Default::default() }).unwrap().document;
+    let mut styles = vec![];
+    back.walk(|n| {
+        if let NodeKind::Text(t) = &n.kind {
+            styles.extend(t.runs.iter().map(|r| r.style.font_style.clone()));
+        }
+    });
+    assert_eq!(styles, ["Bold"]);
 }

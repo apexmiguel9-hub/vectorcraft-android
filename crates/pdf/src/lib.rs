@@ -47,6 +47,8 @@ mod forms;
 mod images;
 mod import;
 mod import_color;
+mod import_image;
+mod import_lines;
 mod import_mask;
 mod import_scan;
 mod import_shading;
@@ -210,6 +212,8 @@ mod tests_charstroke;
 #[cfg(test)]
 mod tests_cmykblend;
 #[cfg(test)]
+mod tests_cmykimages;
+#[cfg(test)]
 mod tests_compression;
 #[cfg(test)]
 mod tests_dashalign;
@@ -228,9 +232,13 @@ mod tests_import_fidelity;
 #[cfg(test)]
 mod tests_import_layers;
 #[cfg(test)]
+mod tests_import_lines;
+#[cfg(test)]
 mod tests_import_options;
 #[cfg(test)]
 mod tests_layers;
+#[cfg(test)]
+mod tests_live_text;
 #[cfg(test)]
 mod tests_marks;
 #[cfg(test)]

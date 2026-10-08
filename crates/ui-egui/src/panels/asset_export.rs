@@ -21,7 +21,7 @@ use super::{pstate, set_pstate};
 use crate::dialogs::{EXPORT_FOR_SCREENS, open_export_for_screens_assets, screen_formats, screen_saved_rows};
 use crate::state::Dialog;
 use crate::theme::Tokens;
-use crate::widgets::{self, PanelDrag, menu_item};
+use crate::widgets::{self, menu_item};
 use crate::{VectorcraftApp, io};
 
 pub const ID: &str = "assetExport";
@@ -49,7 +49,7 @@ pub(crate) fn paint_thumb(ui: &Ui, st: &DocState, a: &ExportAsset, r: Rect) {
         static RENDERER: RefCell<vectorcraft_render::Renderer> = RefCell::new(vectorcraft_render::Renderer::new());
         /// The addresses of each asset's objects in one document revision (no tree walks per frame).
         static KEYS: RefCell<(Revision, HashMap<u64, Look>)> = RefCell::new(Default::default());
-        static CACHE: RefCell<HashMap<(Look, u32), egui::TextureHandle>> = RefCell::new(HashMap::new());
+        static CACHE: crate::graphics::TexCache<HashMap<(Look, u32), egui::TextureHandle>> = crate::graphics::TexCache::default();
     }
     ui.painter().rect_filled(r, 0.0, Color32::WHITE);
     if !ui.is_rect_visible(r) {
@@ -158,11 +158,8 @@ fn tiles(ui: &mut Ui, st: &DocState, sel: &[u64], ev: &mut Events) {
 
 /// Art dragged off the canvas over the list: outline it; dropped, it becomes assets.
 fn drop_zone(ui: &Ui, zone: &egui::Response, ev: &mut Events) {
-    let Some(drag) = zone.dnd_hover_payload::<PanelDrag>() else { return };
-    let PanelDrag::Art(ids) = &*drag else { return };
-    ui.painter().rect_stroke(zone.rect, 0.0, Stroke::new(1.5, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
-    if zone.dnd_release_payload::<PanelDrag>().is_some() {
-        ev.drop = Some((ids.clone(), ui.input(|i| i.modifiers.alt)));
+    if let Some(ids) = widgets::art_drop(ui, zone) {
+        ev.drop = Some((ids.into_iter().map(NodeId).collect(), ui.input(|i| i.modifiers.alt)));
     }
 }
 

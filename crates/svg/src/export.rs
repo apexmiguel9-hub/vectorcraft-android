@@ -198,6 +198,21 @@ fn entity_value(decl: &str) -> String {
     o
 }
 
+/// Image `b` as SVG viewers show it: PNG, JPEG, GIF, WebP and SVG as they are, other formats (a
+/// CMYK TIFF) as PNG.
+fn web_image(b: &ImageBlob) -> std::borrow::Cow<'_, ImageBlob> {
+    use std::borrow::Cow;
+    if matches!(b.mime.as_str(), "image/png" | "image/jpeg" | "image/jpg" | "image/gif" | "image/webp" | "image/svg+xml") {
+        return Cow::Borrowed(b);
+    }
+    let png = image::load_from_memory(&b.bytes).ok().and_then(|img| {
+        let mut out = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
+        Some(out)
+    });
+    png.map_or(Cow::Borrowed(b), |png| Cow::Owned(ImageBlob::png(png)))
+}
+
 /// The usual file extension of an image MIME type.
 fn image_ext(mime: &str) -> &str {
     match mime {
@@ -443,7 +458,7 @@ impl Writer<'_> {
         let (doc, link) = (self.doc, self.opts.images == ImageMode::Link);
         match (im.link.as_ref().filter(|_| link), doc.images.get(&im.key)) {
             (Some(l), _) => Some(l.path.clone()),
-            (None, Some(b)) if !b.bytes.is_empty() => Some(self.blob_href(b)),
+            (None, Some(b)) if !b.bytes.is_empty() => Some(self.blob_href(&web_image(b))),
             _ => im.link.as_ref().map(|l| l.path.clone()),
         }
     }
@@ -1642,10 +1657,23 @@ impl Writer<'_> {
     /// (`text-anchor`) at their centre or right end, so they stay aligned in a viewer whose font
     /// differs; other lines are placed where each style run (and, justified, each word) starts.
     fn text(&mut self, n: &Node, t: &TextObject) {
-        if let TextKind::OnPath { path, start } = &t.kind {
+        // Live SVG text is written in logical order from left-aligned pieces: bidirectional text
+        // (and right-to-left paragraphs) keep their look as outlines until it is written with
+        // `direction`/`unicode-bidi`.
+        let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
+        if lay.glyphs.iter().any(|g| g.rtl) || lay.lines.iter().any(|l| l.rtl) {
+            self.warn("bidirectional text is outlined to preserve shaping and visual order");
+            return self.text_outlines(n, t);
+        }
+        if let TextKind::OnPath { path, start, end } = &t.kind {
+            // `<textPath>` has a start offset only: an end bracket, Align to Path and Spacing
+            // keep their look as outlines.
+            if end.is_some() || t.path_align != vectorcraft_doc::PathAlign::Baseline || t.path_spacing != 0.0 {
+                self.warn("type on a path with an end bracket, Align to Path or Spacing is outlined to keep its look");
+                return self.text_outlines(n, t);
+            }
             return self.text_on_path(n, t, path, *start);
         }
-        let lay = vectorcraft_text::layout(vectorcraft_text::FontDb::global(), t);
         self.note_fonts(t, &lay);
         let lines = text_lines(t, &lay, self.opts.fewer_tspans);
         // A tab starts a new chunk at its stop: only lines without tabs can be anchored.
@@ -1911,7 +1939,7 @@ struct Segment {
 /// caps are upper case.
 fn text_lines(t: &TextObject, lay: &vectorcraft_text::TextLayout, fewer: bool) -> Vec<Vec<Segment>> {
     let plain = t.plain_text();
-    let split_words = !fewer && !matches!(t.para.justify, Justify::Left | Justify::Center | Justify::Right);
+    let split_words = !fewer && !matches!(t.para.justify, Justify::Auto | Justify::Left | Justify::Center | Justify::Right);
     let mut lines = Vec::with_capacity(lay.lines.len());
     for line in &lay.lines {
         let mut segs: Vec<Segment> = Vec::new();

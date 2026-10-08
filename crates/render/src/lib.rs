@@ -325,11 +325,16 @@ pub struct Renderer {
     clip_paints: PtrMap<usize, ClipPaintEntry>,
     /// Placed images as painted in ink planes (see [`ink`]).
     ink_images: ink::InkImages,
+    /// CMYK images as shown through the working CMYK profile (see [`ink`]).
+    cmyk_images: ink::CmykImages,
     /// Gradients along or across strokes, keyed like `strokes` (see [`Self::fill_path_gradient`]).
     stroke_slices: PtrMap<(usize, i32), SliceEntry>,
     /// The keys and sizes of the recoloured images colour adjustments made in `images`, oldest
     /// first (see [`Self::adjusted_image`]).
     adjusted: std::collections::VecDeque<(String, usize)>,
+    /// Layer Options → Dim Images to, of the layer being drawn (screen views only): images show
+    /// faded to this opacity over white.
+    dim_images: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -404,8 +409,10 @@ impl Renderer {
             clip_paths: vec![],
             clip_paints: PtrMap::default(),
             ink_images: Default::default(),
+            cmyk_images: Default::default(),
             stroke_slices: PtrMap::default(),
             adjusted: Default::default(),
+            dim_images: None,
         }
     }
 
@@ -794,6 +801,31 @@ impl Renderer {
         } else if !n.is_container() {
             return;
         }
+        // Layer Options on screen: a layer whose Preview is off draws in outline, and Dim Images
+        // fades its images (exports and thumbnails, which leave templates out, ignore both).
+        // (A template is dimmed as a whole already.)
+        if let NodeKind::Layer { preview, dim_images, template, .. } = &n.kind
+            && f.opts.dim_templates
+            && !f.opts.skip_templates
+        {
+            if !preview && !f.opts.outline {
+                let opts = RenderOptions { outline: true, ..f.opts.clone() };
+                return self.draw_node(ctx, &Frame { opts: &opts, ..*f }, n, force);
+            }
+            if let Some(p) = dim_images.filter(|_| !template) {
+                let outer = self.dim_images;
+                let dim = f32::from(p).clamp(0.0, 100.0) / 100.0;
+                self.dim_images = Some(outer.map_or(dim, |o| o.min(dim)));
+                self.draw_layer_node(ctx, f, n);
+                self.dim_images = outer;
+                return;
+            }
+        }
+        self.draw_layer_node(ctx, f, n);
+    }
+
+    /// [`Self::draw_node`] after culling and Layer Options.
+    fn draw_layer_node(&mut self, ctx: &mut RenderContext, f: &Frame, n: &Node) {
         if fx::has_object_fx(n) {
             return self.draw_object_fx(ctx, f, &Arc::new(n.clone()), false);
         }
@@ -1291,7 +1323,7 @@ impl Renderer {
         };
         let pixels = if outline && !f.doc.setup.outline_images { None } else { self.image_pixmap(f.doc, &im.key, &cache_key, outline) };
         if let Some(pm) = pixels {
-            let pm = if outline { pm } else { self.ink_image(&cache_key, &pm, f.ink) };
+            let pm = if outline { pm } else { self.ink_image(&cache_key, &pm, f.ink, f.doc.images.get(&im.key)) };
             let sx = im.width as f64 / pm.width().max(1) as f64;
             let sy = im.height as f64 / pm.height().max(1) as f64;
             ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(pm), sampler: peniko::ImageSampler::default() });
@@ -1309,6 +1341,21 @@ impl Renderer {
                 }
             }
             ctx.reset_paint_transform();
+            // A dimmed layer's images: white over them, so they show at that opacity on paper.
+            if let Some(dim) = self.dim_images.filter(|d| *d < 1.0 && !outline) {
+                ctx.set_paint(f.ink.fixed([255, 255, 255, ((1.0 - dim) * 255.0).round() as u8]));
+                match area {
+                    Some((bp, rule)) => {
+                        ctx.set_transform(f.view);
+                        ctx.set_fill_rule(fill_rule(*rule));
+                        ctx.fill_path(bp);
+                    }
+                    None => {
+                        ctx.set_transform(f.view * im.xf);
+                        ctx.fill_rect(&rect);
+                    }
+                }
+            }
         }
         if outline {
             let mut p = rect.to_path(0.1);
@@ -1354,9 +1401,15 @@ impl Renderer {
         let colour = match self.images.get(cache_key) {
             Some(p) => p.clone(),
             None => {
-                let pm = Arc::new(paint::decode_pixmap(&doc.images.get(key)?.bytes)?);
-                self.images.insert(cache_key.to_string(), pm.clone());
-                pm
+                let blob = doc.images.get(key)?;
+                match self.cmyk_image(blob, cache_key) {
+                    Some(pm) => pm,
+                    None => {
+                        let pm = Arc::new(paint::decode_pixmap(&blob.bytes)?);
+                        self.images.insert(cache_key.to_string(), pm.clone());
+                        pm
+                    }
+                }
             }
         };
         if !grey {
@@ -1591,6 +1644,8 @@ mod tests_freeform;
 mod tests_isolation;
 #[cfg(test)]
 mod tests_knockout;
+#[cfg(test)]
+mod tests_layeropts;
 #[cfg(test)]
 mod tests_objectfx;
 #[cfg(test)]
