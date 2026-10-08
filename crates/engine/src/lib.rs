@@ -588,13 +588,39 @@ impl Default for Prefs {
             zoom_with_mouse_wheel: false,
             scrub_numeric_fields: true,
             paste_offset: 10.0,
-            selection_tolerance: 3.0,
+            // MEASURED on a phone: 3 px is the desktop value and a fingertip cannot land on
+            // it. This is the screen tolerance every pick goes through (`cx.pick_tol()` is
+            // `selection_tolerance / zoom`, `tools/src/lib.rs:354`), so it governs the node
+            // handles, the bounding-box handles, the mesh points and the slices alike.
+            //
+            // MEASURED that the handle squares were drawn 4 pt and hit-tested at that same
+            // 4 pt — the touch area was literally the square — which is 3.4 UI points at the
+            // 0.85 default scaling, against Android's 48 dp minimum touch target: 14x too
+            // small. 24 px is what it takes to grab one without looking.
+            //
+            // MEASURED that this has to move with the drawn size below: enlarging only the
+            // drawing would make a handle *look* grabbable and not be so.
+            selection_tolerance: 24.0,
             object_selection_by_path_only: false,
             snap_to_point_tolerance: 2.0,
             ctrl_click_selects_behind: true,
             zoom_to_selection: true,
             move_locked_with_artboard: false,
-            anchor_size: 3,
+            // MEASURED on a phone: 3 leaves `grow = 0`, so the anchors draw at 4 pt (5 pt in
+            // direct selection) and the bounding box at 6 pt. The canvas draws that with
+            // `grow + …` and `6.0 + grow` (`ui-egui/src/canvas.rs`), so 3 is the desktop
+            // size and 7 is what a fingertip needs.
+            //
+            // MEASURED that 7 is the ceiling of `anchor_size.clamp(1, 7)` upstream, so this is
+            // the largest the handles get; past that the nodes start covering the geometry
+            // they are there to edit, which is why the drawn size was kept small in the first
+            // place. With 7: anchors 8 pt (9 pt direct), bounding box 10 pt.
+            //
+            // MEDIDO that this is the same shape of fix as `ui_scaling: 0.85` below, and for
+            // the same reason: the default has to live here because `prefs_dialog::restore()`
+            // rebuilds the preferences from the saved file, so anything the Android port set
+            // before it ran would be overwritten.
+            anchor_size: 7,
             handle_style: s("solid"),
             highlight_anchors_on_hover: true,
             show_handles_multiple_anchors: true,
