@@ -162,13 +162,36 @@ pub fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     let avail_h = ctx.content_rect().height() - MARGIN.left - MARGIN.right - CHROME_H;
     let alto_lista = (430.0f32).min(avail_h).max(120.0);
     let alto_campos = (400.0f32).min(avail_h).max(80.0);
+    // MEASURED, and this is deliberately the ONLY thing this change touches: two lines on the
+    // `Window`, nothing inside the dialog.
+    //
+    // MEDIDO en el movil, sobre la captura: el panel va de y=59 a y=1079 px, o sea 418,5 pt
+    // en un viewport de 443,1 — se come la barra de estado por arriba y el ultimo pixel por
+    // abajo, con el titulo cortado y la fila de botones cortada. La causa es que las 15
+    // categorias quieren 386 pt de los 252,1 que quedan, y `set_min_height` es un **suelo**,
+    // asi que la ventana crece por la lista.
+    //
+    // `Window::max_height` (`egui-0.36.2/src/containers/window.rs:310`) recorta **desde
+    // fuera**, y segun el fuente el limite es del tamano **exterior** de la ventana. Asi el
+    // cuadro no puede salirse de la pantalla aunque upstream cambie el contenido, que es lo
+    // que importa: este fichero es de upstream (`crates/ui-egui`) y el proyecto tiene ya 22
+    // contribuidores, asi que reimplementar el menu seria rehacerlo en cada release.
+    //
+    // `RESPIRO` es el aire arriba y abajo para que el cuadro quede *colocado*. Con 10 y el
+    // `content_rect` MEDIDO de 418,9 de alto sale una ventana de 398,9: 10 pt de margen a
+    // cada lado de la barra de estado y la barra de navegacion.
+    const RESPIRO: f32 = 10.0;
+    let alto_ventana = (ctx.content_rect().height() - RESPIRO * 2.0).max(200.0);
     egui::Window::new(tl!("Preferences"))
         .id(egui::Id::new("dialog-preferences"))
         .order(egui::Order::Foreground)
         .collapsible(false)
         .resizable(false)
         .title_bar(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, -20.0])
+        // MEASURED that the offset had to go: with `[0.0, -20.0]` the window was pushed 20 pt
+        // up, so the `Preferences` heading sat **under the status bar** and was cut off.
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .max_height(alto_ventana)
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(MARGIN))
         .show(ctx, |ui| {
             ui.set_width(760.0);
