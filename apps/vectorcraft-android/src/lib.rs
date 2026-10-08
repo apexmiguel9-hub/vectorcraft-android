@@ -111,18 +111,18 @@ mod permiso;
 
 /// El `eframe::App` del port. Tres reenvios, porque todo el editor —50k lineas de
 /// UI, 52 paneles, menus, canvas, atajos— ya vive en `VectorcraftApp`.
-pub struct App(pub VectorcraftApp, /// Si el dialogo de preferencias estaba abierto el frame
-    /// anterior, para detectar el frame en que se cierra y guardar **entonces**.
-    ///
-    /// MEDIDO de por que hace falta en vez de guardar siempre: escribir el `ui.json` en cada
-    /// frame es un `write` por frame, y en un movil eso es I/O en el hilo de la UI. Con la
-    /// bandera solo se escribe cuando el usuario ha pulsado OK o Cancel.
-    ///
-    /// MEDIDO que `Cancel` tambien dispara el guardado, y es lo correcto: `Confirm` deja
-    /// `app.ui.engine_prefs` con lo que hubiera, y como `estado::guardar` refresca ese campo
-    /// desde `session.prefs` (`estado.rs`), el fichero refleja el estado real y no se pierde
-    /// ningun otro ajuste (paneles, docks) que no pasan por este dialogo.
-    dialogo_prefs_antes: bool);
+///
+/// El segundo campo dice si el dialogo de preferencias estaba abierto el frame anterior,
+/// para detectar el frame en que se cierra y guardar **entonces**.
+///
+/// MEDIDO de por que hace falta en vez de guardar siempre: escribir el `ui.json` en cada
+/// frame es un `write` por frame, y en un movil eso es I/O en el hilo de la UI. Con la
+/// bandera solo se escribe cuando el usuario ha pulsado OK o Cancel.
+///
+/// MEDIDO que `Cancel` tambien dispara el guardado, y es lo correcto: como `estado::guardar`
+/// refresca `engine_prefs` desde `session.prefs` (`estado.rs`), el fichero refleja el estado
+/// real y no se pierde ningun otro ajuste (paneles, docks) que no pasan por este dialogo.
+pub struct App(pub VectorcraftApp, dialogo_prefs_antes: bool);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
