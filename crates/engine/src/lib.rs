@@ -630,7 +630,7 @@ impl Default for Prefs {
             // the same reason: the default has to live here because `prefs_dialog::restore()`
             // rebuilds the preferences from the saved file, so anything the Android port set
             // before it ran would be overwritten.
-            anchor_size: 3, // PRUEBA: aislar si los 9 tests vienen de aqui
+            anchor_size: 7,
             handle_style: s("solid"),
             highlight_anchors_on_hover: true,
             show_handles_multiple_anchors: true,

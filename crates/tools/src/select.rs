@@ -138,13 +138,7 @@ enum BoxHit {
 
 /// The bounding-box handle or rotate zone under `p`.
 fn box_hit(cx: &ToolContext, b: &OrientedBox, p: Point) -> Option<BoxHit> {
-    // MEASURED, same reason as the node handles in `direct.rs`: the bounding-box handles are
-    // drawn 12 pt (`canvas.rs:1418`) and were hit-tested at 5 pt, so a phone user would see a
-    // chunky square and still have to land on 5 pt of it — 4.3 UI points at the 0.85 default
-    // scaling, against Android's 48 dp minimum touch target. MEASURED that the two numbers
-    // have to move together: enlarging only the drawing makes a handle *look* grabbable
-    // without being so.
-    let (tol, lp) = (cx.tol(24.0), b.to_local(p));
+    let (tol, lp) = (cx.tol(5.0), b.to_local(p));
     if let Some(h) = hit_handle(b.rect, lp, tol) {
         return Some(BoxHit::Handle(h));
     }

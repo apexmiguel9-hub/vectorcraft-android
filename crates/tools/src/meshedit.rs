@@ -45,12 +45,7 @@ impl MeshEdit {
     /// The handle of the focused point, else the mesh point, under `p` among the meshes `ids`
     /// (editable ones, in order).
     pub fn hit(&self, cx: &ToolContext, ids: &[NodeId], p: Point) -> Option<MeshGrab> {
-        // MEASURED, same reason as `direct.rs`: the mesh points are drawn 5 pt
-        // (`meshedit.rs:99`) and were hit-tested at that same 5 pt, because `cx.tol(px)` is
-        // `px / zoom` (`lib.rs:261`). MEASURED on a phone that is 4.3 UI points against
-        // Android's 48 dp minimum touch target. The drawing stays small so the grid does not
-        // cover its own quads; only the touch area grows.
-        let tol = cx.tol(24.0);
+        let tol = cx.tol(5.0);
         if let Some((id, index)) = self.focus
             && ids.contains(&id)
             && let Some(grid) = cx.doc.node(id).and_then(grid_of)
@@ -101,7 +96,7 @@ impl MeshEdit {
         let Some((id, index)) = self.focus else { return vec![] };
         let Some(grid) = cx.doc.node(id).and_then(grid_of) else { return vec![] };
         let Some(q) = grid.points.get(index) else { return vec![] };
-        let mut out = vec![Overlay::Anchor { p: q.p, color: FEEDBACK, filled: true, size: 10.0 }];
+        let mut out = vec![Overlay::Anchor { p: q.p, color: FEEDBACK, filled: true, size: 5.0 }];
         for h in q.handles.iter().filter(|h| h.hypot() > 1e-6) {
             out.push(Overlay::Line { a: q.p, b: q.p + *h, color: FEEDBACK, dashed: false });
             out.push(Overlay::Handle { p: q.p + *h, color: FEEDBACK });

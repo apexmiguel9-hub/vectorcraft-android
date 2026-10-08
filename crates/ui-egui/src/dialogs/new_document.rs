@@ -181,6 +181,22 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
     sync(app, &mut d);
     let t = Tokens::get(ctx);
     let mut b = Buttons::default();
+    // MEASURED, and this is the fix for the button row vanishing on a phone.
+    //
+    // `modal::show` clamps the window **frame** (`dialogs/modal.rs`, `.max_height(..)`), but a
+    // `set_min_height` on the content is a **floor**: with `HEIGHT = 600` the two columns
+    // insisted on 568 pt each, so the content drew straight through the clamp and the last
+    // thing in it — the Create / Cancel row — fell off the bottom of the screen. MEASURED in
+    // the screenshot: the dialog fills the screen and the buttons are simply not there.
+    //
+    // It was visible only at the 0.75 scaling and gone at 0.85, which is the tell: the frame
+    // fits at 0.75 and the **content** does not, so lowering the scale hid it by accident.
+    //
+    // So the height has to be clamped to what the frame was given, and once, here. The
+    // chrome is the frame's own 18 pt margins per side plus the tab row (30) and the button
+    // row (44), all of which sit outside these columns.
+    const CHROME: f32 = 36.0 + 30.0 + 44.0;
+    let alto = (HEIGHT).min((ctx.content_rect().height() - CHROME).max(160.0));
     window(ctx, KIND, 0, |ui| {
         // No heading: the top margin (14) and the empty part of the category tabs' row (30) move the
         // window.
@@ -189,14 +205,14 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 22, right: 14, top: 14, bottom: 18 }).show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.set_width(640.0);
-                    ui.set_min_height(HEIGHT - 32.0);
-                    presets(app, ui, &mut d);
+                    ui.set_min_height(alto - 32.0);
+                    presets(app, ui, &mut d, alto);
                 });
             });
             egui::Frame::NONE.fill(t.panel_darker).inner_margin(egui::Margin::same(18)).show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.set_width(DETAILS);
-                    ui.set_min_height(HEIGHT);
+                    ui.set_min_height(alto);
                     details(app, ui, &mut d, &mut b);
                 });
             });
@@ -206,7 +222,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 /// The category tabs and the chosen category's preset cards.
-fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
+fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, alto: f32) {
     let t = Tokens::get(ui.ctx());
     let names: Vec<&str> = newdoc::category_names().collect();
     let cat = names.iter().position(|n| n.eq_ignore_ascii_case(&d.str("category"))).unwrap_or(0);
@@ -229,7 +245,7 @@ fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
         ui.label(egui::RichText::new(hint).color(t.text_dim));
         return;
     }
-    egui::ScrollArea::vertical().id_salt(("newdoc-presets", cat)).max_height(HEIGHT - 110.0).auto_shrink([false, false]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt(("newdoc-presets", cat)).max_height((alto - 110.0).max(80.0)).auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
             let (w, h, preset) = (d.f64("width", 0.0), d.f64("height", 0.0), d.str("preset"));
@@ -343,7 +359,7 @@ fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut 
         d.kind = MORE.into();
     }
     // Close and Create at the bottom right.
-    ui.add_space((HEIGHT - (ui.cursor().top() - top) - 28.0).max(12.0));
+    ui.add_space((alto - (ui.cursor().top() - top) - 28.0).max(12.0));
     ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 28.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
         b.create = widgets::primary_button(ui, tl!("Create")).clicked();
         ui.add_space(8.0);
