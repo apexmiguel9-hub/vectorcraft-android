@@ -1228,9 +1228,9 @@ fn thread_overlay(app: &VectorcraftApp, p: &egui::Painter, xf: &Xf) {
             let (out, inp) = (xf.to_screen(Point::new(w[0].x1, w[0].y1)), xf.to_screen(Point::new(w[1].x0, w[1].y0)));
             p.line_segment([out, inp], Stroke::new(1.0, color));
             for port in [out, inp] {
-                p.rect_filled(egui::Rect::from_center_size(port, egui::vec2(7.0, 7.0)), 0.0, Color32::WHITE);
-                p.rect_stroke(egui::Rect::from_center_size(port, egui::vec2(7.0, 7.0)), 0.0, Stroke::new(1.0, color), egui::StrokeKind::Inside);
-                p.line_segment([port - egui::vec2(2.0, 0.0), port + egui::vec2(2.0, 0.0)], Stroke::new(1.0, color));
+                p.rect_filled(egui::Rect::from_center_size(port, egui::vec2(14.0, 14.0)), 0.0, Color32::WHITE);
+                p.rect_stroke(egui::Rect::from_center_size(port, egui::vec2(14.0, 14.0)), 0.0, Stroke::new(1.5, color), egui::StrokeKind::Inside);
+                p.line_segment([port - egui::vec2(4.0, 0.0), port + egui::vec2(4.0, 0.0)], Stroke::new(1.5, color));
             }
         }
     }
@@ -1337,7 +1337,7 @@ fn selection_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf) {
         walk_drawn(n, &mut |c| {
             if let Some((_, Some(grid))) = vectorcraft_doc::live::envelope_overlay(c) {
                 for q in &grid.points {
-                    anchor_square(p, xf.to_screen(q.p), color, false, if direct { 5.0 } else { 4.0 });
+                    anchor_square(p, xf.to_screen(q.p), color, false, if direct { 10.0 } else { 8.0 });
                 }
                 return;
             }
@@ -1362,7 +1362,7 @@ fn selection_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf) {
                     sp,
                     if sel && partial.is_some() { selected_anchor(color) } else { color },
                     sel,
-                    if partial.is_some() || direct { 5.0 } else { 4.0 },
+                    if partial.is_some() || direct { 10.0 } else { 8.0 },
                 );
             }
         });
@@ -1370,7 +1370,7 @@ fn selection_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf) {
         if n.shows_center()
             && let Some(b) = n.geometric_bounds()
         {
-            anchor_square(p, xf.to_screen(b.center()), color, true, 4.0);
+            anchor_square(p, xf.to_screen(b.center()), color, true, 8.0);
         }
         // Text: baseline marker (area type shows its frame instead, which may not be a rectangle).
         if let NodeKind::Text(tx) = &n.kind
@@ -1394,7 +1394,7 @@ fn selection_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf) {
         let color = c32(st.doc.layer_color(b));
         stroke_path(p, &path.to_bezpath(), xf, Stroke::new(1.0, color));
         for (_, _, a) in path.anchors() {
-            anchor_square(p, xf.to_screen(a.p), color, false, if direct { 5.0 } else { 4.0 });
+            anchor_square(p, xf.to_screen(a.p), color, false, if direct { 10.0 } else { 8.0 });
         }
     }
     // Live Corners widgets (Selection / Direct Selection on a single live rectangle).
@@ -1415,7 +1415,7 @@ fn selection_overlay(app: &mut VectorcraftApp, p: &egui::Painter, xf: &Xf) {
         p.add(Shape::closed_line(b.corners().iter().map(|q| xf.to_screen(*q)).collect(), Stroke::new(1.0, color)));
         for h in vectorcraft_tools::bbox::Handle::ALL {
             let c = xf.to_screen(b.to_doc() * h.pos(b.rect));
-            let hr = egui::Rect::from_center_size(c, vec2(6.0, 6.0));
+            let hr = egui::Rect::from_center_size(c, vec2(12.0, 12.0));
             p.rect_filled(hr, 0.0, Color32::WHITE);
             p.rect_stroke(hr, 0.0, Stroke::new(1.0, color), StrokeKind::Inside);
         }

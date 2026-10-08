@@ -436,7 +436,7 @@ fn frame_overlays(cx: &ToolContext) -> Vec<Overlay> {
     for id in &cx.selection.objects {
         let Some(frame) = cx.doc.node(*id).filter(|n| is_area_type(n)).and_then(editable_path) else { continue };
         let color = cx.doc.layer_color(*id);
-        out.extend(frame.anchors().map(|(_, _, a)| Overlay::Anchor { p: a.p, color, filled: false, size: 5.0 }));
+        out.extend(frame.anchors().map(|(_, _, a)| Overlay::Anchor { p: a.p, color, filled: false, size: 10.0 }));
     }
     out
 }
@@ -465,7 +465,7 @@ impl DirectSelectionTool {
             out.push(Overlay::Line { a: a.p, b: h, color, dashed: false });
             out.push(Overlay::Handle { p: h, color });
         }
-        out.push(Overlay::Anchor { p: a.p, color, filled: true, size: 5.0 });
+        out.push(Overlay::Anchor { p: a.p, color, filled: true, size: 10.0 });
         out
     }
 }

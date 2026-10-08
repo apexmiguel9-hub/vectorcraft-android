@@ -101,7 +101,7 @@ impl MeshEdit {
         let Some((id, index)) = self.focus else { return vec![] };
         let Some(grid) = cx.doc.node(id).and_then(grid_of) else { return vec![] };
         let Some(q) = grid.points.get(index) else { return vec![] };
-        let mut out = vec![Overlay::Anchor { p: q.p, color: FEEDBACK, filled: true, size: 5.0 }];
+        let mut out = vec![Overlay::Anchor { p: q.p, color: FEEDBACK, filled: true, size: 10.0 }];
         for h in q.handles.iter().filter(|h| h.hypot() > 1e-6) {
             out.push(Overlay::Line { a: q.p, b: q.p + *h, color: FEEDBACK, dashed: false });
             out.push(Overlay::Handle { p: q.p + *h, color: FEEDBACK });

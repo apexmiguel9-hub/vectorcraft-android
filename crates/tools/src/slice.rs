@@ -38,7 +38,9 @@ fn has_area(r: Rect) -> bool {
 /// Snap `p` as the drawing tools do, then to the nearest ruler guide within reach (guides win).
 fn snap(cx: &ToolContext, p: Point) -> (Point, Vec<Overlay>) {
     let (mut q, ov) = crate::guides::snap_draw(cx, p, &[]);
-    let tol = cx.tol(5.0);
+    // MEASURED, same reason as `direct.rs`: the slice handles are drawn 7 pt and were
+    // hit-tested at 5 pt — 4.3 UI points on a phone, against Android's 48 dp minimum.
+    let tol = cx.tol(24.0);
     let nearest = |vertical: bool, v: f64| {
         cx.doc
             .guides

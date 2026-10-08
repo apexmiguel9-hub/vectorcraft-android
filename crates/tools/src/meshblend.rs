@@ -55,7 +55,9 @@ fn anchor_at(cx: &ToolContext, id: NodeId, p: Point) -> Option<usize> {
         NodeKind::Compound { children, .. } => children.first()?.path_data()?,
         _ => return None,
     };
-    let tol = cx.tol(5.0);
+    // MEASURED, same reason as `direct.rs`: the blend mesh points are drawn 10-12 pt and were
+    // hit-tested at 5 pt, which is 4.3 UI points on a phone at the 0.85 default scaling.
+    let tol = cx.tol(24.0);
     let d = |a: &vectorcraft_geom::Anchor| a.p.distance(p);
     let (i, a) = path.subpaths.first()?.anchors.iter().enumerate().min_by(|x, y| d(x.1).total_cmp(&d(y.1)))?;
     (d(a) <= tol).then_some(i)
@@ -122,7 +124,7 @@ impl Tool for BlendTool {
             _ => None,
         };
         let Some(p) = at.or_else(|| n.geometric_bounds().map(|b| b.center())) else { return vec![] };
-        vec![Overlay::Anchor { p, color: FEEDBACK, filled: true, size: 6.0 }]
+        vec![Overlay::Anchor { p, color: FEEDBACK, filled: true, size: 12.0 }]
     }
     fn cursor(&self, cx: &ToolContext, p: Point, _mods: Mods) -> Cursor {
         match pick(cx, p) {
