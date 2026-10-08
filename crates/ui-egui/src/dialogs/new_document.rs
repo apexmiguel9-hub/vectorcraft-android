@@ -213,7 +213,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
                 ui.vertical(|ui| {
                     ui.set_width(DETAILS);
                     ui.set_min_height(alto);
-                    details(app, ui, &mut d, &mut b);
+                    details(app, ui, &mut d, &mut b, alto);
                 });
             });
         });
@@ -303,7 +303,7 @@ pub fn preset_card(ui: &mut egui::Ui, s: &DocSettings, selected: bool) -> egui::
 }
 
 /// The Preset Details column.
-fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut Buttons) {
+fn details(app: &mut VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, b: &mut Buttons, alto: f32) {
     let t = Tokens::get(ui.ctx());
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
     let top = ui.cursor().top();
