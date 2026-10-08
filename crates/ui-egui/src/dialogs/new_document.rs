@@ -64,29 +64,6 @@ const COLOR_MODES: [(&str, &str); 2] = [("rgb", "RGB Color"), ("cmyk", "CMYK Col
 const DETAILS: f32 = 292.0;
 /// Height of the dialog's content.
 const HEIGHT: f32 = 600.0;
-/// MEASURED: horizontal inner margins of the two columns, as they appear in `show`.
-/// The Presets frame is `Margin { left: 22, right: 14, .. }` and the Details one is
-/// `Margin::same(18)`, so 36 + 36. The first attempt at making this dialog fit a
-/// small window left these out of the arithmetic and overflowed the screen by
-/// exactly 19pt on a 985pt-wide one — see the note in `show`.
-const PRESETS_MARGIN_X: f32 = 22.0 + 14.0;
-const DETAILS_MARGIN_X: f32 = 18.0 + 18.0;
-/// Width of the Presets column.
-const PRESETS: f32 = 640.0;
-/// MEASURED: vertical inner margins. The Presets frame is `Margin { top: 14, bottom: 18, .. }`
-/// and the Details one is `Margin::same(18)`. Same trap as `PRESETS_MARGIN_X`: these sit
-/// *on top of* a `set_min_height`, not inside it, so the window comes out taller than
-/// the height asked for.
-const PRESETS_MARGIN_Y: f32 = 14.0 + 18.0;
-const DETAILS_MARGIN_Y: f32 = 18.0 + 18.0;
-/// MEASURED: `window()` anchors the dialog at `Align2::CENTER_CENTER, [0.0, -20.0]`,
-/// i.e. 20pt above centre. Harmless on a tall window; on a 443pt-tall one it is what
-/// pushes the top edge off the screen.
-/// MEASURED: height of the Cancel/OK row at the bottom of the Details column, which
-/// sits outside the `ScrollArea` and therefore adds to the window height.
-const BUTTON_ROW: f32 = 44.0;
-/// Floor for the dialog height, so a very short window still shows something.
-const MIN_HEIGHT: f32 = 200.0;
 
 /// Open New Document on the most recent settings (or Letter), named after the next untitled
 /// document.
@@ -211,20 +188,16 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         ui.horizontal_top(|ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 22, right: 14, top: 14, bottom: 18 }).show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(presets_w);
-                    ui.set_min_height(height - PRESETS_MARGIN_Y);
-                    presets(app, ui, &mut d, height);
+                    ui.set_width(640.0);
+                    ui.set_min_height(HEIGHT - 32.0);
+                    presets(app, ui, &mut d);
                 });
             });
             egui::Frame::NONE.fill(t.panel_darker).inner_margin(egui::Margin::same(18)).show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(details_w);
-                    ui.set_min_height(height);
-                    egui::ScrollArea::vertical()
-                        .id_salt("newdoc-details")
-                        .max_height((height - DETAILS_MARGIN_Y).max(0.0))
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| details(app, ui, &mut d, &mut b));
+                    ui.set_width(DETAILS);
+                    ui.set_min_height(HEIGHT);
+                    details(app, ui, &mut d, &mut b);
                 });
             });
         });
@@ -233,7 +206,7 @@ fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
 }
 
 /// The category tabs and the chosen category's preset cards.
-fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, height: f32) {
+fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog) {
     let t = Tokens::get(ui.ctx());
     let names: Vec<&str> = newdoc::category_names().collect();
     let cat = names.iter().position(|n| n.eq_ignore_ascii_case(&d.str("category"))).unwrap_or(0);
@@ -256,10 +229,7 @@ fn presets(app: &VectorcraftApp, ui: &mut egui::Ui, d: &mut Dialog, height: f32)
         ui.label(egui::RichText::new(hint).color(t.text_dim));
         return;
     }
-    // MEASURED: was `HEIGHT - 110.0`, a fixed number. On a short window that goes
-    // negative and the list has nowhere to scroll.
-    let list_h = (height - 110.0).max(0.0);
-    egui::ScrollArea::vertical().id_salt(("newdoc-presets", cat)).max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt(("newdoc-presets", cat)).max_height(HEIGHT - 110.0).auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
             let (w, h, preset) = (d.f64("width", 0.0), d.f64("height", 0.0), d.str("preset"));
