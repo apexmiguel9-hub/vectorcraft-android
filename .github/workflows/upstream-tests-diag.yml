@@ -38,13 +38,20 @@ jobs:
       # MEDIDO: `ref` sin `path` deja el checkout **en el sitio**, reemplazando nuestro arbol,
       # que es justo lo que hace falta — queremos su codigo, no el nuestro.
       #
-      # MEDIDO que el `refs/tags/` es obligatorio: `v0.7.0` es un **tag**, y con solo `v0.7.0`
-      # `actions/checkout` lo busca como rama y falla:
+      # MEDIDO, y hacia falta **repo: upstream** ademas del ref. El tag `v0.7.0` existe en
+      # `storytold/vectorcraft`, no en este fork: `actions/checkout` por defecto hace checkout
+      # de `apexmiguel9-hub/vectorcraft-android`, donde no hay ningun tag de release, y falla:
+      #
+      #     fatal: couldn't find remote ref refs/tags/v0.7.0
+      #
+      # El primer intento con `ref: v0.7.0` fallo tambien, pero distinto, porque lo buscaba
+      # como rama en vez de como tag:
       #
       #     git fetch --no-tags --prune … +refs/heads/v0.7.0*:refs/remotes/origin/v0.7.0*
       #     The process '/usr/bin/git' failed with exit code 1
       - uses: actions/checkout@v4
         with:
+          repository: storytold/vectorcraft
           ref: refs/tags/v0.7.0
 
       - uses: dtolnay/rust-toolchain@stable
