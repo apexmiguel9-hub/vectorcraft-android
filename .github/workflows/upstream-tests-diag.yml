@@ -1,0 +1,56 @@
+name: Tests de upstream limpio (diagnostico)
+
+# MEDIDO de por que existe esto, y por que es temporal.
+#
+# Al fusionar upstream v0.7.0 (41 commits, 1 conflicto) fallaron **9 tests** de
+# `vectorcraft-engine`, entre ellos `snap_to_pixel_rounds_drawing_and_moves`:
+#
+#     left:  (37.29999999999999, 34.8)
+#     right: (17.0, 16.0)
+#
+# MEDIDO que NO es cosa del port:
+#
+#   * `selection_tolerance` esta en **3.0 en los dos** — upstream (lib.rs:591) y el port
+#     (lib.rs:613). Se probo subirlo a 8.0 en el port y broke 12 tests, pero al volverlo a
+#     3.0 los 9 seguian fallando, asi que la teoria era falsa.
+#   * Upstream **no toco** `tests.rs`, `tests_typearea.rs`, `tests_menucmds.rs` ni
+#     `tests_xform.rs` en los 41 commits, pero **si** cambio el comportamiento de las
+#     herramientas (`crates/tools/src/{shape,pen,text}.rs`, +1061/−162).
+#
+# La hipotesis es que **los tests fallan tambien en su propio 0.7.0**. Este workflow lo
+# comprueba compilando `v0.7.0` **sin ninguno de nuestros cambios**.
+#
+# MEDIDO de por que va en CI y no local: el cargo de esta maquina es **1.85.1** y el
+# `rust-version` del workspace es **1.95**, asi que aqui no se puede ni resolver el grafo:
+#
+#     Either upgrade rustc or select compatible dependency versions with
+#     cargo update <name>@<current-ver> --precise <compatible-ver>
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-clean:
+    runs-on: ubuntu-latest
+    steps:
+      # MEDIDO: `ref` sin `path` deja el checkout **en el sitio**, replacing our tree, que es
+      # justo lo que hace falta — queremos su codigo, no el nuestro.
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.7.0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # MEDIDO que solo el motor: los 9 tests estan todos en `vectorcraft-engine`, y el resto
+      # del workspace multiplica el tiempo sin aportar a esta pregunta.
+      - name: Suite del motor en el upstream sin tocar
+        run: |
+          cargo test -p vectorcraft-engine --lib 2>&1 | tail -60
+
+      - name: Los 9 de nuestra lista
+        if: always()
+        run: |
+          cargo test -p vectorcraft-engine --lib 2>&1 \
+            | grep -E '\.\.\. FAILED|^test result' | tail -20
