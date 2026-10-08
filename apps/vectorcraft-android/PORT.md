@@ -397,7 +397,96 @@ diría nada, que es justo el fallo que buscaba detectar.
 
 ---
 
-## 9. Lo que NO está hecho
+## 9. Fusiones de upstream: el mapa de los conflictos
+
+MEDIDO con `git merge-tree --write-tree` en seco, que **no toca la rama**. Es la forma de
+saber lo que cuesta una fusión antes de empezar, y el script `scripts/actualizar-upstream.sh`
+no lo hace.
+
+### Las dos que llevamos
+
+| Fusión | Commits | Conflictos |
+|---|---:|---:|
+| 188 commits | 188 | **1** (`.gitignore`) |
+| 336 commits (2 releases + i18n italiano) | 336 | **7** |
+
+Always **merge**, no rebase: con 111 commits del port un rebase son 111 oportunidades de
+conflicto en vez de 7, y además reescribe historia ya publicada.
+
+### Dónde caen siempre
+
+| Fichero | Conflictos | Por qué |
+|---|---:|---|
+| `crates/ui-egui/src/canvas.rs` | 7 | El archivo con más commits de los dos lados: 29 de upstream, 15 del port |
+| `crates/ui-egui/src/dialogs/*.rs` | 3 | Upstream refactorizó los diálogos a un helper `modal::show` |
+| `Cargo.lock` | 1 | **Nunca se resuelve a mano** — se regenera con `.github/workflows/regen-lock.yml`, en CI, porque el cargo local es más antiguo que el `rust-version` del workspace (1.95) y baja versiones |
+| `crates/tools/src/*.rs` | 1 | Upstream extrajo la tolerancia de acierto a `cx.pick_tol()` |
+
+### Lo que costó de más, y por qué
+
+* **`new_document.rs`**: tomar el lado de upstream en un conflicto dejó mis variables
+  (`presets_w`, `height`) mezcladas con las suyas, y los 5 identificadores que quedaron
+  huérfanos. **Error mío**: un conflicto de imports y otro de bloque se resuelven **uniendo**,
+  no eligiendo. La salida fue tomar el fichero entero de upstream: **−130 líneas**, todas
+  constantes de márgenes que su `modal::show` ya hace.
+* **`prefs_dialog.rs`**: −`CHROME_H` muerto, que `clippy -D warnings` rechaza.
+* **El recorte de alto de los diálogos** pasó de estar en `dialogs/mod.rs` a `dialogs/modal.rs`,
+  que es mejor: `modal::show` es por donde pasan **todos** los diálogos, así que ahora el
+  recorte se aplica a los nuevos de upstream sin tocar nada.
+
+---
+
+## 10. Los defaults de preferencias: cambiados, y upstream los puede volver a cambiar
+
+**Este repo cambia defaults de `Prefs`, en `crates/engine/src/lib.rs`, a propósito.** No es
+un descuido: es lo que hace el port utilizable en un dedo. Y como upstream toca ese fichero,
+**cualquier fusión puede devolverlos a los de escritorio y romper tests.** Es lo primero que
+hay que mirar cuando `ci-ui` salga rojo tras una fusión.
+
+### Los tres
+
+| Preferencia | Upstream | Aquí | Por qué |
+|---|---:|---:|---|
+| `ui_scaling` | 1.0 | **0.85** | MEDIDO: el diálogo de Preferencias pide 418,5 pt-UI de alto y un móvil en horizontal da 418,9 de `content_rect`. A 1,0 cabe por 0,4 pt y el `anchor` de −20 lo empujaba fuera: título bajo la barra de estado y fila de botones cortada. A 0,85 sobran 74,3 pt |
+| `anchor_size` | 3 | **7** | MEDIDO: 3 deja `grow = 0` y los nodos se dibujan de 4 pt — 3,4 pt-UI a 0,85, contra los **48 dp** que Android pide. 7 es el **techo** de `clamp(1, 7)` |
+| `selection_tolerance` | 3.0 | **8.0** | MEDIDO: la tolerancia de acierto de todo (nodos, bbox, malla, slices). **Ojo: el techo es 8**, no 24 |
+
+### El techo de `selection_tolerance`, que no se puede sortear
+
+MEDIDO: el 24 que se probó **es inválido**, y lo delató un test, no la lectura del código:
+
+```
+invalid parameters for `prefs.set`: `selectionTolerance` must be between 1 and 8 (got 24)
+```
+
+Y el techo está en `crates/engine/src/cmd/prefscmds.rs:138`:
+
+```rust
+p!("selectionTolerance", …, num(1.0, 8.0, "px")),
+```
+
+8 son 2,7 veces el default de escritorio. Es casi todo el camino, pero **no todo**: pasarlo de
+8 exige tocar esa validación, que es de upstream.
+
+### Qué hacer cuando upstream rompa esto
+
+1. `git diff <antes-de-la-fusion>..HEAD -- crates/engine/src/lib.rs` y mira las tres líneas.
+2. Si upstream bajó los defaults, **vuelve a subirlos**: son 3 líneas.
+3. Los tests de handles (`canvas.rs`) fallarán con un mensaje como
+   `anchors 4, handles 6 by default: [8.0, 10.0, 800.0]`. **Están bien**: son de *escalado* y
+   de *estilo*, no del default. Se arreglan fijando `anchorSize` a 3 explícitamente en el test,
+   que es como ya están.
+
+### La lección del tamaño de los handles
+
+MEDIDO que upstream **ya había hecho** esto mejor que el port: extrajeron el tamaño a la
+preferencia `anchor_size` y crean `cx.pick_tol()`. El port tenía hardcodeados `8.0`, `12.0` y
+`24.0` en nueve sitios, lo cual además de ser peor obliga a rehacerlo en cada fusión. **Cuando
+se toque esto, primero leer si upstream ya lo hizo.**
+
+---
+
+## 11. Lo que NO está hecho
 
 | | |
 |---|---|
@@ -410,7 +499,7 @@ diría nada, que es justo el fallo que buscaba detectar.
 
 ---
 
-## 10. Reproducir
+## 12. Reproducir
 
 ```bash
 gh workflow run build-android-so.yml        # o push a main; tarda ~10 min
