@@ -1369,7 +1369,6 @@
 	Make a theme on Create and save it.	Crea un tema nella scheda Crea e salvalo.
 	Make all bleed settings the same	Usa lo stesso valore per tutte le abbondanze
 	Make and Expand	Crea ed espandi
-	Make and Expand…	Crea ed espandi…
 	Make Clipping Mask	Crea maschera di ritaglio
 	Make Compound Shape	Crea forma composta
 	Make Envelope	Crea involucro
@@ -1382,7 +1381,6 @@
 	Make with Top Object	Crea con oggetto superiore
 	Make with Warp…	Crea con alterazione…
 	Make/Release Clipping Mask	Crea/rilascia maschera di ritaglio
-	Make…	Crea…
 	Manage Workspaces	Gestisci aree di lavoro
 	Manage Workspaces…	Gestisci aree di lavoro…
 	Manually	Manualmente
@@ -2546,6 +2544,7 @@
 	Character:	Carattere:
 	Character options	Opzioni carattere
 	Stroke options	Opzioni traccia
+	Transform options	Opzioni di trasformazione
 	Stroke Weight	Spessore traccia
 	Stroke:	Traccia:
 	Stroke: click for swatches, Shift-click for the color mixer	Traccia: fai clic per i campioni, Shift+clic per il miscelatore colori
@@ -3072,7 +3071,7 @@ axis	Both	Entrambi
 @msg	Convert to Artboards: selection has no area	Converti in tavole da disegno: la selezione non ha area
 @msg	Convert to Shape: no rectangles or ellipses selected	Converti in forma: nessun rettangolo o ellisse selezionato
 @msg	Copied the CSS of {rules} object(s)	Copiato il CSS di {rules} oggetto/i
-@msg	Corners edits a live rectangle	Angoli modifica un rettangolo dinamico
+@msg	Corners edits the corners of a path	Angoli modifica gli angoli di un tracciato
 @msg	Couldn't copy to the system clipboard: {e}	Impossibile copiare negli appunti di sistema: {e}
 @msg	Couldn't open {name}: {e}	Impossibile aprire {name}: {e}
 @msg	Couldn't place {name}: the document it was dropped on was closed	Impossibile inserire {name}: il documento su cui è stato rilasciato è stato chiuso
@@ -3238,7 +3237,7 @@ axis	Both	Entrambi
 @msg	file version {0} is newer than this VectorCraft supports ({VERSION})	la versione del file {0} è più recente di quelle supportate da questo VectorCraft ({VERSION})
 @msg	freeform point {i} needs `at` [x, y] and a valid `color`	il punto a forma libera {i} richiede `at` [x, y] e un `color` valido
 @msg	give both `start` and `end` [x, y] (or neither)	specifica sia `start` sia `end` [x, y] (o nessuno dei due)
-@msg	give corners 0–3	specifica angoli da 0 a 3
+@msg	give corners of the path: anchors between two straight sides	specifica angoli del tracciato: punti di ancoraggio tra due lati diritti
 @msg	give the path `id` and the width point `index`	specifica l'`id` del tracciato e l'`index` del punto di larghezza
 @msg	guides are locked	le guide sono bloccate
 @msg	image '{key}' has no pixels and was left out	l'immagine '{key}' non ha pixel ed è stata omessa
@@ -3416,13 +3415,17 @@ axis	Both	Entrambi
 @msg	select a stroke with a variable width	seleziona una traccia con larghezza variabile
 @msg	select a symbol instance	seleziona un'istanza di simbolo
 @msg	select an Image Trace object	seleziona un oggetto di ricalco immagine
+@msg	could not decode image: {0}	impossibile decodificare l'immagine: {0}
+@msg	image is empty	l'immagine è vuota
+@msg	the image is {width} × {height} pixels, more than Image Trace takes ({max} megapixels)	l'immagine misura {width} × {height} pixel, più di quanto accetti Ricalco immagine ({max} megapixel)
+@msg	this trace would make more than {max} anchor points, more than the document can show smoothly: raise Noise, lower Paths or Colors, or pick a lower-fidelity preset	questo ricalco creerebbe più di {max} punti di ancoraggio, più di quanti il documento possa mostrare in modo fluido: aumenta Disturbo, riduci Tracciati o Colori, oppure scegli un preset a fedeltà inferiore
 @msg	select an envelope	seleziona un involucro
 @msg	select an image	seleziona un'immagine
 @msg	select an object in perspective	seleziona un oggetto in prospettiva
 @msg	select artwork (or a colour group) to recolor	seleziona la grafica (o un gruppo colori) da ricolorare
 @msg	select at least two objects	seleziona almeno due oggetti
 @msg	select objects, not layers	seleziona oggetti, non livelli
-@msg	select one live rectangle, or give its `id`	seleziona un rettangolo dinamico o specifica il suo `id`
+@msg	select one path, or give its `id`	seleziona un tracciato o specifica il suo `id`
 @msg	select paths to join	seleziona i tracciati da unire
 @msg	select the art to repeat	seleziona la grafica da ripetere
 @msg	select the artwork to warp	seleziona la grafica da alterare
@@ -3582,3 +3585,10 @@ axis	Both	Entrambi
 @msg	{tool} isn't in a toolbar group of several tools	{tool} non fa parte di un gruppo di più strumenti nella barra degli strumenti
 @msg	onto must name a panel floating in another group	onto deve indicare un pannello mobile in un altro gruppo
 @msg	x and y must both be numbers	x e y devono essere entrambi numeri
+
+# The macOS menu bar (native_menu): the app and Window menus' system items, Settings pages.
+	Services	Servizi
+	Hide VectorCraft	Nascondi VectorCraft
+	Zoom	Zoom
+	Bring All to Front	Porta tutto in primo piano
+	Settings	Impostazioni

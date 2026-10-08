@@ -171,6 +171,29 @@ fn partial_catalogs_only_translate_strings_the_ui_shows() {
     }
 }
 
+/// The engine learns the language the UI is drawn in each frame: new type takes the Japanese
+/// defaults while it is Japanese (#432). The frames stay in English: the drawing language is
+/// process-wide, and a Japanese frame would translate the tests running beside this one.
+#[test]
+fn the_engine_follows_the_interface_language() {
+    let mut app = crate::VectorcraftApp::new(vectorcraft_engine::Session::new(), crate::Services::default());
+    let ctx = egui::Context::default();
+    let frame = |app: &mut crate::VectorcraftApp| {
+        ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx())).textures_delta.clear();
+    };
+    frame(&mut app);
+    assert_eq!(app.session.ui_language.as_deref(), Some("en"), "tests resolve `auto` to English");
+    assert!(!app.session.japanese_interface());
+    // Each frame hands the engine the language it draws in, whatever the engine had.
+    app.session.ui_language = Some("ja".into());
+    assert!(app.session.japanese_interface());
+    frame(&mut app);
+    assert_eq!(app.session.ui_language.as_deref(), Some("en"));
+    // The language a frame would draw in follows the preference.
+    app.session.prefs.interface_language = "ja".into();
+    assert_eq!(app.ui_language().code(), "ja");
+}
+
 /// VectorCraft › Language (`app.language`) sets the `interfaceLanguage` preference, which is what
 /// persists; the checked item follows the preference, and a bad code is an error, not a change.
 #[test]
@@ -503,6 +526,9 @@ fn menu_catalogs_translate_every_menu_label() {
     let mut all: Vec<String> = labels.iter().filter(|l| interface(l)).map(|(l, ..)| l.to_string()).collect();
     all.extend(toggled_labels());
     all.extend(crate::menus::CONTEXT_LABELS.iter().map(|l| l.to_string()));
+    // The macOS menu bar's own labels, and its Settings submenu's Preferences pages.
+    all.extend(crate::native_menu::MAC_LABELS.iter().map(|l| l.to_string()));
+    all.extend(vectorcraft_engine::cmd::prefscmds::PREF_CATEGORIES.iter().map(|l| l.to_string()));
     all.sort();
     all.dedup();
     for code in KEEPS_MENU_NAMES {
@@ -685,7 +711,7 @@ fn complete_languages_translate_every_message() {
 const COMPLETE_MESSAGES: &[&str] = &["es", "it"];
 
 /// Crates whose error and status messages reach the status bar.
-const MESSAGE_CRATES: &[&str] = &["ui-egui", "engine", "doc", "format", "svg", "pdf", "eps", "text", "plugins", "metafile", "cad"];
+const MESSAGE_CRATES: &[&str] = &["ui-egui", "engine", "doc", "format", "svg", "pdf", "eps", "text", "plugins", "metafile", "cad", "trace"];
 
 /// Where a message literal starts: a status, an error value, a `thiserror` message.
 const MESSAGE_MARKERS: &[&str] = &[".status(", "ui.status = ", "status = ", "Other(", "Err(", "ok_or(", "ok_or_else(|| ", "#[error("];
