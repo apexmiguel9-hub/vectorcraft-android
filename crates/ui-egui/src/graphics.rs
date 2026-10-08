@@ -150,6 +150,16 @@ mod tests {
 
     fn app() -> VectorcraftApp {
         let mut app = VectorcraftApp::new(Session::new(), Services::default());
+        // MEASURED that this test has to pin the scale. The texture cache key carries it
+        // (`preview-8x8@<scale>`), and the port's default is 0.85 for the phone
+        // (`engine/src/lib.rs`), so reading the default made it assert
+        //
+        //     left:  Some("preview-8x8@0.8500000238418579:loss")
+        //     right: Some("preview-8x8@1:loss")
+        //
+        // What this test is about is that the same texture is re-uploaded into a **new**
+        // graphics context, not what the scale happens to be.
+        app.run("prefs.set", json!({"key": "uiScaling", "value": 1.0})).unwrap();
         app.run("file.new", json!({"width": 200, "height": 100})).unwrap();
         app.run("shape.rectangle", json!({"x": 10, "y": 10, "width": 50, "height": 20})).unwrap();
         app

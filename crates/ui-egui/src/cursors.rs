@@ -523,6 +523,12 @@ mod tests {
     #[test]
     fn the_canvas_hands_the_tool_cursor_to_the_os_and_idles_while_the_pointer_rests() {
         let mut app = VectorcraftApp::new(Session::new(), Default::default());
+        // MEASURED that this test has to pin the scale, for the same reason as
+        // `graphics.rs`. The OS cursor bitmap is rasterised at the UI scale, and the port's
+        // default is 0.85 for the phone (`engine/src/lib.rs`), so the bitmap the app handed
+        // over was 16x22 where the test asked for the 1.0 one, 19x25. What this test is about
+        // is *which* cursor reaches the OS, not how big it is.
+        app.run("prefs.set", json!({"key": "uiScaling", "value": 1.0})).unwrap();
         app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
         let ctx = egui::Context::default();
         for _ in 0..3 {
