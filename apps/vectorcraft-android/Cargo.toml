@@ -29,6 +29,12 @@ publish = false
 [dependencies]
 vectorcraft-engine = { workspace = true }
 vectorcraft-ui-egui = { workspace = true }
+# MEDIDO que hace falta y por que no estaba: `estado.rs` serializa el `UiState` entero al
+# `ui.json` y lo relee al arrancar, que es exactamente lo que hace el escritorio con
+# `serde_json::to_vec_pretty` / `from_slice` (`apps/vectorcraft/src/main.rs:124,101`).
+# MEDIDO que no se puede usar `vectorcraft_ui_egui::…` para esto: la escritura es del port.
+# Del workspace, para no duplicar la version.
+serde_json = { workspace = true }
 vectorcraft-render = { workspace = true }
 
 # MEDIDO que hace falta `android-native-activity`, y no `android-game-activity`.

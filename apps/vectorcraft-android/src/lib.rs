@@ -105,11 +105,24 @@ use vectorcraft_ui_egui::VectorcraftApp;
 #[cfg(target_os = "android")]
 mod browser;
 #[cfg(target_os = "android")]
+mod estado;
+#[cfg(target_os = "android")]
 mod permiso;
 
 /// El `eframe::App` del port. Tres reenvios, porque todo el editor —50k lineas de
 /// UI, 52 paneles, menus, canvas, atajos— ya vive en `VectorcraftApp`.
-pub struct App(pub VectorcraftApp);
+pub struct App(pub VectorcraftApp, /// Si el dialogo de preferencias estaba abierto el frame
+    /// anterior, para detectar el frame en que se cierra y guardar **entonces**.
+    ///
+    /// MEDIDO de por que hace falta en vez de guardar siempre: escribir el `ui.json` en cada
+    /// frame es un `write` por frame, y en un movil eso es I/O en el hilo de la UI. Con la
+    /// bandera solo se escribe cuando el usuario ha pulsado OK o Cancel.
+    ///
+    /// MEDIDO que `Cancel` tambien dispara el guardado, y es lo correcto: `Confirm` deja
+    /// `app.ui.engine_prefs` con lo que hubiera, y como `estado::guardar` refresca ese campo
+    /// desde `session.prefs` (`estado.rs`), el fichero refleja el estado real y no se pierde
+    /// ningun otro ajuste (paneles, docks) que no pasan por este dialogo.
+    dialogo_prefs_antes: bool);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -120,6 +133,18 @@ impl eframe::App for App {
         #[cfg(target_os = "android")]
         browser::logic(ctx);
         self.0.logic(ctx);
+        // MEDIDO de por que el guardado va **despues** de `self.0.logic(ctx)`: es el editor el
+        // que drena el comando `prefs.set` y pone `app.ui.dialog = None`
+        // (`prefs_dialog.rs:46`), asi que antes de este frame el dialogo sigue abierto y la
+        // transicion no se ve.
+        #[cfg(target_os = "android")]
+        {
+            let prefs_ahora = self.0.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences");
+            if self.dialogo_prefs_antes && !prefs_ahora {
+                estado::guardar(&self.0);
+            }
+            self.dialogo_prefs_antes = prefs_ahora;
+        }
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -204,6 +229,19 @@ impl eframe::App for App {
                 .show(ui.ctx(), browser::aviso);
         }
     }
+    // MEDIDO de por que el guardado va aqui y no solo al pulsar OK: es lo que hace el
+    // escritorio (`apps/vectorcraft/src/main.rs:49`, `fn on_exit`), y es la unica red que
+    // cubre los cambios que **no** pasan por el dialogo de preferencias.
+    //
+    // MEDIDO de lo que faltaba sin esto: en Android no habia ninguna llamada a guardar, ni al
+    // pulsar OK ni al salir. `prefs_dialog::confirm` (`prefs_dialog.rs:47`) si copia las
+    // preferencias a `app.ui`, pero sin esta capa el dato se quedaba en memoria; al reabrir,
+    // `prefs_dialog::restore` (`prefs_dialog.rs:58`) caia en `unwrap_or_default()` y todo
+    // volvia al valor de fabrica.
+    #[cfg(target_os = "android")]
+    fn on_exit(&mut self) {
+        estado::guardar(&self.0);
+    }
 }
 
 /// Construye el editor.
@@ -221,7 +259,15 @@ pub fn build(_cc: &eframe::CreationContext<'_>) -> std::result::Result<Box<dyn e
     #[cfg(not(target_os = "android"))]
     let services = vectorcraft_ui_egui::Services::default();
 
-    let app = VectorcraftApp::new(Session::new(), services);    Ok(Box::new(App(app)))
+    let mut app = VectorcraftApp::new(Session::new(), services);
+    // MEDIDO de por que esto va aqui: `build` es donde nace la app, y el escritorio carga el
+    // estado justo despues de crearla (`apps/vectorcraft/src/main.rs:106`). MEDIDO que el
+    // **orden** importa — `estado::cargar` hace `app.ui = ui.sanitized()` y luego
+    // `prefs_dialog::restore(app)`, que es lo que pasa `engine_prefs` a `session.prefs`; al
+    // reves, `restore` pisaria lo recien cargado.
+    #[cfg(target_os = "android")]
+    estado::cargar(&mut app);
+    Ok(Box::new(App(app, false)))
 }
 
 /// Opciones de ventana.
