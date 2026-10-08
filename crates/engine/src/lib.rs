@@ -599,7 +599,37 @@ impl Default for Prefs {
             auto_collapse_icon_panels: false,
             open_documents_as_tabs: true,
             large_tabs: false,
-            ui_scaling: 1.0,
+            // MEASURED, and this default is the phone's, not the desktop's. The Preferences
+            // dialog wants **418.5 UI points** of height for its 15 categories plus its
+            // heading and button row, and on a phone in landscape there is not that much:
+            //
+            //     viewport in landscape      443.1 pt
+            //     - status bar inset          24.2
+            //     = content_rect             418.9
+            //
+            // so at 1.0 the dialog wants 418.5 out of 418.9 — it fits by 0.4 pt, and the
+            // `-20.0` anchor offset pushed it 20 pt up, which cut the `Preferences` heading
+            // under the status bar and the button row off the bottom edge. MEASURED on the
+            // screenshot: the panel ran from y=59 to y=1079 of 1080 px, flush to both edges.
+            //
+            // At 0.85 the zoom factor multiplies `pixels_per_point`
+            // (`egui-0.36.2/src/context.rs:2329`), so the same 418.5 UI points render at
+            // 15% less screen space and `content_rect` grows to 492.8 UI points:
+            //
+            //     zoom 1.00 -> content_rect 418.9, headroom  +0.4
+            //     zoom 0.90 -> content_rect 465.4, headroom +46.9
+            //     zoom 0.85 -> content_rect 492.8, headroom +74.3
+            //     zoom 0.75 -> content_rect 558.5, headroom +140.0
+            //
+            // 0.85 is the pick because it has real headroom (18%) and is only 15% smaller;
+            // 0.75 centres even better but makes every other menu uncomfortably small, and it
+            // is also the floor of the clamp in `prefs_dialog.rs:109`, so leaving no room
+            // below it. VERIFIED by hand on the device at 1.0 and again at 0.85, where the
+            // whole dialog fits with the title, all 15 categories and the button row
+            // visible. Users who want it bigger change it in Preferences → User Interface,
+            // which applies live (`prefs_dialog.rs:109`, called every frame from
+            // `lib.rs:727`).
+            ui_scaling: 0.85,
             scale_cursor_with_ui: false,
             interface_language: s("auto"),
             gpu_performance: true,
