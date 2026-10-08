@@ -35,11 +35,17 @@ jobs:
   upstream-clean:
     runs-on: ubuntu-latest
     steps:
-      # MEDIDO: `ref` sin `path` deja el checkout **en el sitio**, replacing our tree, que es
-      # justo lo que hace falta — queremos su codigo, no el nuestro.
+      # MEDIDO: `ref` sin `path` deja el checkout **en el sitio**, reemplazando nuestro arbol,
+      # que es justo lo que hace falta — queremos su codigo, no el nuestro.
+      #
+      # MEDIDO que el `refs/tags/` es obligatorio: `v0.7.0` es un **tag**, y con solo `v0.7.0`
+      # `actions/checkout` lo busca como rama y falla:
+      #
+      #     git fetch --no-tags --prune … +refs/heads/v0.7.0*:refs/remotes/origin/v0.7.0*
+      #     The process '/usr/bin/git' failed with exit code 1
       - uses: actions/checkout@v4
         with:
-          ref: v0.7.0
+          ref: refs/tags/v0.7.0
 
       - uses: dtolnay/rust-toolchain@stable
 
