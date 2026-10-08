@@ -113,7 +113,7 @@ mod permiso;
 /// UI, 52 paneles, menus, canvas, atajos— ya vive en `VectorcraftApp`.
 ///
 /// El segundo campo dice si el dialogo de preferencias estaba abierto el frame anterior,
-/// para detectar el frame en que se cierra y guardar **entonces**.
+/// para detectar el frame en que se cierra y guardar **entonces**. Es `self.1`.
 ///
 /// MEDIDO de por que hace falta en vez de guardar siempre: escribir el `ui.json` en cada
 /// frame es un `write` por frame, y en un movil eso es I/O en el hilo de la UI. Con la
@@ -122,7 +122,12 @@ mod permiso;
 /// MEDIDO que `Cancel` tambien dispara el guardado, y es lo correcto: como `estado::guardar`
 /// refresca `engine_prefs` desde `session.prefs` (`estado.rs`), el fichero refleja el estado
 /// real y no se pierde ningun otro ajuste (paneles, docks) que no pasan por este dialogo.
-pub struct App(pub VectorcraftApp, dialogo_prefs_antes: bool);
+///
+/// MEDIDO que sigue siendo un **tuple struct** y no uno con campos nombrados: en un tuple
+/// los campos son posicionales y no admiten ni nombre ni anotacion de tipo, asi que
+/// escribirlos asi da "expected one of …, found `:`" (E0658). Dejarlo en tupla evita
+/// reescribir los 7 `self.0` de este fichero.
+pub struct App(pub VectorcraftApp, bool);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -140,10 +145,10 @@ impl eframe::App for App {
         #[cfg(target_os = "android")]
         {
             let prefs_ahora = self.0.ui.dialog.as_ref().is_some_and(|d| d.kind == "preferences");
-            if self.dialogo_prefs_antes && !prefs_ahora {
+            if self.1 && !prefs_ahora {
                 estado::guardar(&self.0);
             }
-            self.dialogo_prefs_antes = prefs_ahora;
+            self.1 = prefs_ahora;
         }
     }
 
