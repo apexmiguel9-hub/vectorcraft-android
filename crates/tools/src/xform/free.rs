@@ -168,7 +168,7 @@ impl FreeTransformTool {
     }
 
     fn classify(&self, cx: &ToolContext, r: Rect, p: Point, m: Mods) -> Option<Op> {
-        let tol = cx.tol(5.0);
+        let tol = cx.handle_tol();
         if let Some(h) = hit_handle(r, p, tol) {
             return Some(self.handle_op(h, m));
         }

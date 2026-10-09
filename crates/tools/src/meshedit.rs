@@ -45,7 +45,7 @@ impl MeshEdit {
     /// The handle of the focused point, else the mesh point, under `p` among the meshes `ids`
     /// (editable ones, in order).
     pub fn hit(&self, cx: &ToolContext, ids: &[NodeId], p: Point) -> Option<MeshGrab> {
-        let tol = cx.tol(5.0);
+        let tol = cx.handle_tol();
         if let Some((id, index)) = self.focus
             && ids.contains(&id)
             && let Some(grid) = cx.doc.node(id).and_then(grid_of)

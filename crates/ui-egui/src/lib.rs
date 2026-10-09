@@ -242,6 +242,18 @@ pub struct Services {
 
 /// Cached canvas raster.
 pub struct CanvasCache {
+    /// Whether a finger is on the glass this frame.
+    ///
+    /// MEASURED that this is needed because a fingertip and a mouse pointer are not the same
+    /// input: a finger covers ~8 mm and cannot land on a 5 px target, while a mouse lands on
+    /// it exactly. `crates/tools` therefore takes a **bigger** tolerance for the canvas
+    /// handles when this is set (`ToolContext::handle_tol`), and leaves the desktop value
+    /// alone otherwise.
+    ///
+    /// MEASURED that it lives here and not in `UiState`: this is per-frame runtime state like
+    /// `worker` and `key`, whereas `UiState` is what gets serialised into `ui.json`, and a
+    /// transient flag does not belong in a saved file.
+    pub touching: bool,
     pub renderer: vectorcraft_render::Renderer,
     pub texture: Option<egui::TextureHandle>,
     pub key: Option<CacheKey>,
@@ -387,6 +399,7 @@ impl VectorcraftApp {
             views,
             services,
             canvas: CanvasCache {
+                touching: false,
                 renderer: vectorcraft_render::Renderer::new(),
                 texture: None,
                 key: None,
@@ -460,6 +473,7 @@ impl VectorcraftApp {
 
     pub fn view_info(&self) -> ViewInfo {
         ViewInfo {
+            touch: self.canvas.touching,
             zoom: self.view().map(|v| v.zoom).unwrap_or(1.0),
             outline: self.ui.view.outline,
             smart_guides: self.ui.view.smart_guides,

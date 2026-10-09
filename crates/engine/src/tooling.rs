@@ -10,6 +10,13 @@ use crate::{EngineError, Prefs, Result, Session};
 /// View state the tools need from the frontend.
 #[derive(Clone, Copy, Debug)]
 pub struct ViewInfo {
+    /// Whether a finger is on the glass right now, which the host reads from its input.
+    ///
+    /// MEASURED that this exists because a fingertip cannot hit a 5 px handle target: it
+    /// covers roughly 8 mm. It travels in `ViewInfo` because that is what `with_tool_cx`
+    /// already takes and what the host rebuilds every frame, so no new parameter is needed
+    /// anywhere else.
+    pub touch: bool,
     pub zoom: f64,
     pub outline: bool,
     pub smart_guides: bool,
@@ -177,6 +184,7 @@ impl Session {
         let Some(st) = self.active.and_then(|i| self.docs.get(i)) else { return R::default() };
         let (unit, stroke_unit) = (self.general_unit(), self.stroke_unit());
         let cx = ToolContext {
+            touch: view.touch,
             doc: &st.doc,
             revision: (st.uid, st.revision),
             selection: &st.selection,

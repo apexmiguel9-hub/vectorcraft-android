@@ -48,7 +48,7 @@ impl CurvatureTool {
     }
 
     fn hit_point(&self, cx: &ToolContext, p: Point) -> Option<usize> {
-        let tol = cx.tol(5.0);
+        let tol = cx.handle_tol();
         self.pts.iter().position(|(q, _)| q.distance(p) <= tol)
     }
 

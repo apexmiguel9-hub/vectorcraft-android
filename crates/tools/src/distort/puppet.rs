@@ -441,7 +441,7 @@ impl Tool for PuppetWarpTool {
             if self.show_mesh {
                 out.push(Overlay::Path { path: c.mesh.clone(), color: [0x9a, 0x9a, 0x9a], width: 0.5, dashed: false });
             }
-            let r = cx.tol(5.0);
+            let r = cx.handle_tol();
             for (i, q) in c.set.pins.iter().enumerate() {
                 let sel = self.selected.contains(&i) && cx.selection.objects == self.ids;
                 out.push(Overlay::Path {

@@ -468,6 +468,16 @@ fn cursor_icon(c: Cursor) -> egui::CursorIcon {
 }
 
 fn handle_input(app: &mut VectorcraftApp, ui: &Ui, resp: &egui::Response, rect: egui::Rect) {
+    // MEASURED that this has to be sampled here and not in `view_info()`: the latter takes
+    // `&self` and has no `egui::Context`, so it cannot ask about the input. `handle_input` is
+    // the one canvas function that has the `Ui`, and it runs before the tools are dispatched,
+    // so the flag is fresh for this frame's event.
+    //
+    // MEDIDO that `any_touches()` is the right question and not "is the pointer down":
+    // `egui-winit` synthesises a **mouse** from every finger (`lib.rs:904`), so on a phone the
+    // pointer is always down and asking about it would make every platform take the finger
+    // path. `any_touches()` is true only while a real `Event::Touch` is active.
+    app.canvas.touching = ui.input(|i| i.any_touches());
     let line = ui.ctx().options(|o| o.input_options.line_scroll_speed);
     let wheel_zooms = app.session.prefs.zoom_with_mouse_wheel;
     let alt_id = egui::Id::new("canvas-alt-wheel");

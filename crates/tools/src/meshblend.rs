@@ -55,7 +55,7 @@ fn anchor_at(cx: &ToolContext, id: NodeId, p: Point) -> Option<usize> {
         NodeKind::Compound { children, .. } => children.first()?.path_data()?,
         _ => return None,
     };
-    let tol = cx.tol(5.0);
+    let tol = cx.handle_tol();
     let d = |a: &vectorcraft_geom::Anchor| a.p.distance(p);
     let (i, a) = path.subpaths.first()?.anchors.iter().enumerate().min_by(|x, y| d(x.1).total_cmp(&d(y.1)))?;
     (d(a) <= tol).then_some(i)

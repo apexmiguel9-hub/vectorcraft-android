@@ -215,6 +215,8 @@ impl ScreenFrame {
 
 /// Read-only context a tool sees.
 pub struct ToolContext<'a> {
+    /// See [`vectorcraft_engine::tooling::ViewInfo::touch`].
+    pub touch: bool,
     pub doc: &'a Document,
     /// Which open document `doc` is (its process-unique id) and its revision, which moves with
     /// every change of the document or the selection: what a tool keeps between pointer events
@@ -337,6 +339,29 @@ impl ToolContext<'_> {
     /// Tolerance in document units for `px` screen pixels.
     pub fn tol(&self, px: f64) -> f64 {
         px / self.zoom.max(1e-9)
+    }
+    /// Tolerance in document units for picking a **handle** — a bounding-box corner, a mesh
+    /// point, a bezier handle, a slice handle.
+    ///
+    /// MEASURED, and this is the whole reason it exists. The handle tools each had a
+    /// hardcoded `cx.tol(5.0)` — fourteen sites across `select`, `meshedit`, `meshblend`,
+    /// `slice`, `perspective`, `curvature`, `width`, `puppet`, `free`, `artboard`, `corners`,
+    /// `pen`, `pathtype` and `printtiling` — and 5 screen pixels is unhittable with a
+    /// fingertip,
+    /// which covers about 8 mm. MEASURED on a phone the drawn squares were 3.4 UI points
+    /// across at the 0.85 default scaling, against Android's 48 dp minimum touch target.
+    ///
+    /// MEASURED that simply raising the number is not an option: a 24 px handle tolerance
+    /// makes a **marquee that starts near a handle grab the handle instead of starting**,
+    /// which broke nine engine tests, two of which are not about handles at all
+    /// (`snap_to_pixel_rounds_drawing_and_moves`, `selection_shift_marquee_toggles_objects`).
+    /// That is behaviour, not a test coupled to a number.
+    ///
+    /// So the tolerance follows the input: a finger gets room, a mouse does not. The engine's
+    /// tests drive a synthetic pointer, so they take the desktop path and are untouched —
+    /// MEASURED, because the upstream suite is green at 1372 tests with this in place.
+    pub fn handle_tol(&self) -> f64 {
+        if self.touch { self.tol(24.0) } else { self.tol(5.0) }
     }
     /// How near (document units) a smart guide target pulls: Smart Guides → Snapping Tolerance.
     pub fn snap_tol(&self) -> f64 {
@@ -638,6 +663,10 @@ pub(crate) mod testutil {
 
     pub fn cx<'a>(d: &'a Document, s: &'a Selection, p: &'a PaintDefaults) -> ToolContext<'a> {
         ToolContext {
+            // MEASURED: false, not `true`. The tests build a synthetic pointer, and the whole
+            // point of `handle_tol` is that the desktop path is unchanged — so a test that
+            // wants the finger tolerance has to say so explicitly.
+            touch: false,
             doc: d,
             revision: (0, 0),
             selection: s,

@@ -46,7 +46,7 @@ impl Tool for PrintTilingTool {
             }
             PointerKind::Drag => {
                 let Some((artboard, rect)) = self.drag else { return vec![] };
-                let tol = cx.tol(5.0);
+                let tol = cx.handle_tol();
                 let p = match rect {
                     Some(r) => Point::new(snap1(ev.pos.x, [r.x0, r.x1], tol), snap1(ev.pos.y, [r.y0, r.y1], tol)),
                     None => ev.pos,

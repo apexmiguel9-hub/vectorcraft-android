@@ -163,7 +163,7 @@ impl Tool for ArtboardTool {
         match (ev.kind, self.drag) {
             (PointerKind::Down, _) => {
                 if let Some(r) = self.active_rect(cx)
-                    && let Some(handle) = hit_handle(r, p, cx.tol(5.0))
+                    && let Some(handle) = hit_handle(r, p, cx.handle_tol())
                 {
                     self.drag = Some(Drag::Resize { index: self.active, handle, rect: r, grab: handle.pos(r) - p, began: false });
                     return vec![];
@@ -316,7 +316,7 @@ impl Tool for ArtboardTool {
 
     fn cursor(&self, cx: &ToolContext, p: Point, _m: Mods) -> Cursor {
         if let Some(r) = self.active_rect(cx)
-            && let Some(h) = hit_handle(r, p, cx.tol(5.0))
+            && let Some(h) = hit_handle(r, p, cx.handle_tol())
         {
             return match h {
                 Handle::Top | Handle::Bottom => Cursor::ResizeV,
