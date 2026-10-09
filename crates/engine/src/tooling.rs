@@ -37,6 +37,9 @@ pub struct ViewInfo {
 impl Default for ViewInfo {
     fn default() -> Self {
         Self {
+            // MEASURED: false, like every other field here — a default `ViewInfo` means "no
+            // finger", which is what the engine's tests and a desktop window both are.
+            touch: false,
             zoom: 1.0,
             outline: false,
             smart_guides: true,
