@@ -60,6 +60,13 @@ jobs:
       - name: tests del motor
         run: cargo test -p vectorcraft-engine
 
+      # MEDIDO: `vectorcraft-tools` no lo lanzaba nadie aqui, y ahi vive
+      # `ToolContext::tol`, que es donde el port ensancha el acierto de handle con el
+      # dedo. Sin este paso sus tests no existen: se compilarian y nadie los veria.
+      # MEDIDO que hace falta tambien porque el guard de la fusion depende de ahi.
+      - name: tests de las herramientas
+        run: cargo test -p vectorcraft-tools
+
       - name: capas
         # MEDIDO: sale como `Layer violation: ...` si un crate de abajo importa
         # egui. El port no lo hamovido, pero el fix del dialogo no puede
