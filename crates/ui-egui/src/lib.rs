@@ -247,7 +247,7 @@ pub struct CanvasCache {
     /// MEASURED that this is needed because a fingertip and a mouse pointer are not the same
     /// input: a finger covers ~8 mm and cannot land on a 5 px target, while a mouse lands on
     /// it exactly. `crates/tools` therefore takes a **bigger** tolerance for the canvas
-    /// handles when this is set (`ToolContext::handle_tol`), and leaves the desktop value
+    /// handles when this is set ([`vectorcraft_tools::ToolContext::tol`]), and leaves the desktop
     /// alone otherwise.
     ///
     /// MEASURED that it lives here and not in `UiState`: this is per-frame runtime state like

@@ -148,13 +148,13 @@ fn angle_in(xf: Affine, c: &Corner) -> f64 {
 
 /// Is `p` over a corner widget the active tool would drag (Direct Selection: `any_path`)?
 pub fn over_widget(cx: &ToolContext, p: Point, any_path: bool) -> bool {
-    CornerWidgets::for_tool(cx, any_path).and_then(|w| w.hit(p, cx.handle_tol())).is_some()
+    CornerWidgets::for_tool(cx, any_path).and_then(|w| w.hit(p, cx.tol(5.0))).is_some()
 }
 
 /// A double-click on a corner widget opens the Corners dialog for the shown corners.
 pub fn double_click(cx: &ToolContext, p: Point, any_path: bool) -> Option<Action> {
     let w = CornerWidgets::for_tool(cx, any_path)?;
-    w.hit(p, cx.handle_tol())?;
+    w.hit(p, cx.tol(5.0))?;
     Some(Action::Dialog(DIALOG.into(), json!({ "id": w.id.0, "corners": w.corners() })))
 }
 
@@ -184,7 +184,7 @@ impl CornerDrag {
     /// `any_path`).
     pub fn hit(cx: &ToolContext, ev: &PointerEvent, any_path: bool) -> Option<Self> {
         let (widgets, p) = (CornerWidgets::for_tool(cx, any_path)?, ev.pos);
-        let widget = widgets.hit(p, cx.handle_tol())?;
+        let widget = widgets.hit(p, cx.tol(5.0))?;
         let radius = widgets.widgets.get(widget)?.radius;
         let lc = cx.doc.node(widgets.id).and_then(LiveCorners::of)?;
         let n = lc.base.anchor_count();

@@ -198,7 +198,7 @@ impl WidthTool {
     /// The width point part nearest to `p` within a few pixels: a centre (`None`) or the end of a
     /// left (`Some(true)`) or right (`Some(false)`) handle.
     fn hit(cx: &ToolContext, spot: &Spot, p: Point) -> Option<(WPoint, Option<bool>)> {
-        let tol = cx.handle_tol();
+        let tol = cx.tol(5.0);
         Self::points_of(cx, spot.owner, spot.id, spot.sub)
             .into_iter()
             .flat_map(|w| [(w, None, w.p), (w, Some(true), w.p + w.n * w.left), (w, Some(false), w.p - w.n * w.right)])
@@ -359,7 +359,7 @@ impl Tool for WidthTool {
                         (d.t, d.spot.p, d.spot.n) = (t, q, left_normal(tan));
                         // Dropped onto another width point (a single point only): it lands exactly
                         // there, making a discontinuous point.
-                        let tol = cx.handle_tol();
+                        let tol = cx.tol(5.0);
                         if d.group.is_none()
                             && let Some(o) = d.others.iter().find(|o| o.p.distance(q) <= tol)
                         {

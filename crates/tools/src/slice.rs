@@ -38,7 +38,7 @@ fn has_area(r: Rect) -> bool {
 /// Snap `p` as the drawing tools do, then to the nearest ruler guide within reach (guides win).
 fn snap(cx: &ToolContext, p: Point) -> (Point, Vec<Overlay>) {
     let (mut q, ov) = crate::guides::snap_draw(cx, p, &[]);
-    let tol = cx.handle_tol();
+    let tol = cx.tol(5.0);
     let nearest = |vertical: bool, v: f64| {
         cx.doc
             .guides
@@ -170,7 +170,7 @@ fn slice_at(cx: &ToolContext, p: Point) -> Option<NodeId> {
 
 /// A handle of a selected user slice under `p`: (slice, handle, its rectangle).
 fn handle_at(cx: &ToolContext, p: Point) -> Option<(NodeId, Handle, Rect)> {
-    cx.selection.slices.iter().filter_map(|id| cx.doc.slice(*id)).find_map(|s| hit_handle(s.rect, p, cx.handle_tol()).map(|h| (s.id, h, s.rect)))
+    cx.selection.slices.iter().filter_map(|id| cx.doc.slice(*id)).find_map(|s| hit_handle(s.rect, p, cx.tol(5.0)).map(|h| (s.id, h, s.rect)))
 }
 
 impl SliceSelectionTool {

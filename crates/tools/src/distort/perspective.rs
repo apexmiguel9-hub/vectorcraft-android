@@ -1138,7 +1138,7 @@ impl Tool for PerspectiveSelectionTool {
                     return vec![Action::Begin("Move Plane".into())];
                 }
                 if let Some((plane, depth, rect, h)) = selection_persp_box(cx, &g)
-                    && let Some(handle) = persp_handle_at(rect, &h, p, cx.handle_tol())
+                    && let Some(handle) = persp_handle_at(rect, &h, p, cx.tol(5.0))
                 {
                     self.drag = SelDrag::Scale { ids: cx.selection.objects.clone(), plane, depth, rect, handle };
                     return vec![Action::Begin("Scale in Perspective".into())];
@@ -1274,7 +1274,7 @@ impl Tool for PerspectiveSelectionTool {
             return Cursor::Move;
         }
         if let Some((_, _, rect, h)) = selection_persp_box(cx, &g)
-            && let Some(k) = handle.or_else(|| persp_handle_at(rect, &h, p, cx.handle_tol()))
+            && let Some(k) = handle.or_else(|| persp_handle_at(rect, &h, p, cx.tol(5.0)))
             && let (Some(a), Some(c)) = (h.apply(k.pos(rect)), h.apply(rect.center()))
         {
             return resize_cursor(a - c);

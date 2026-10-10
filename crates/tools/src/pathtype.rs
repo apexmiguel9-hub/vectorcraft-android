@@ -113,7 +113,7 @@ impl Brackets {
 /// The selected type on a path's bracket under `p`, if any.
 fn bracket_at(cx: &ToolContext, p: Point) -> Option<(Brackets, Bracket)> {
     Brackets::of(cx).into_iter().find_map(|b| {
-        let which = b.hit(p, cx.zoom, cx.handle_tol())?;
+        let which = b.hit(p, cx.zoom, cx.tol(5.0))?;
         Some((b, which))
     })
 }

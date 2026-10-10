@@ -123,7 +123,7 @@ impl Tool for PenTool {
         self.drag.is_some() || self.handle.is_some() || self.convert.is_some()
     }
     fn pointer(&mut self, cx: &ToolContext, ev: &PointerEvent) -> Vec<Action> {
-        let tol = cx.handle_tol();
+        let tol = cx.tol(5.0);
         // The path a press began is the selected one by the next event.
         if self.drawing && self.path.is_none() {
             self.path = active_path(cx).map(|a| a.0);
@@ -297,7 +297,7 @@ impl Tool for PenTool {
         o
     }
     fn cursor(&self, cx: &ToolContext, p: Point, m: Mods) -> Cursor {
-        let tol = cx.handle_tol();
+        let tol = cx.tol(5.0);
         if let Some((id, first, last, _)) = self.active(cx) {
             let one = last_anchor(cx, id).is_some_and(|(_, ai)| ai == 0);
             if p.distance(first) <= tol && !one {

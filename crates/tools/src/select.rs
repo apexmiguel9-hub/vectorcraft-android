@@ -138,7 +138,7 @@ enum BoxHit {
 
 /// The bounding-box handle or rotate zone under `p`.
 fn box_hit(cx: &ToolContext, b: &OrientedBox, p: Point) -> Option<BoxHit> {
-    let (tol, lp) = (cx.handle_tol(), b.to_local(p));
+    let (tol, lp) = (cx.tol(5.0), b.to_local(p));
     if let Some(h) = hit_handle(b.rect, lp, tol) {
         return Some(BoxHit::Handle(h));
     }

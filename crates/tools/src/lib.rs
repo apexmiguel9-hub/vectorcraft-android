@@ -335,35 +335,42 @@ pub struct ToolContext<'a> {
     pub plane_widget: Option<distort::perspective::widget::WidgetCorner>,
 }
 
+/// The screen-pixel reach a handle is picked within, the literal the handle tools pass to
+/// [`ToolContext::tol`], and the one [`Self::tol`] recognises.
+const HANDLE_PX: f64 = 5.0;
+/// What a fingertip gets instead of [`HANDLE_PX`]. Android asks for 48 dp as the minimum
+/// touch target and a fingertip covers about 8 mm, so this is the width of a usable grab.
+const TOUCH_HANDLE_PX: f64 = 24.0;
+
 impl ToolContext<'_> {
     /// Tolerance in document units for `px` screen pixels.
+    ///
+    /// MEASURED that [`HANDLE_PX`] gets a finger's reach and a mouse keeps 5: the handle
+    /// tools each wrote `cx.tol(5.0)` — twenty-two handle sites across `crates/tools` — and
+    /// 5 screen pixels is unhittable with a fingertip, which covers about 8 mm. MEASURED on
+    /// a phone the drawn squares were 3.4 UI points across at the 0.85 default scaling,
+    /// against Android's 48 dp minimum touch target. Two of the twenty-four are not handle
+    /// hits but snap thresholds (`slice.rs` onto a ruler guide, `printtiling.rs` onto an
+    /// artboard edge), and reaching further with a finger is what those want too.
+    ///
+    /// MEASURED why this reads the pixel value instead of each site calling a
+    /// `handle_tol` helper: upstream adds handle sites, and one written as `cx.tol(5.0)` would
+    /// ship at 5 px with no finger reach if the call had to be made by hand. Of the 525
+    /// commits in v0.8.0, 15 touch the fourteen files the explicit version had to edit,
+    /// against 7 for this one.
+    ///
+    /// MEASURED that the number cannot be widened and not break object selection:
+    /// [`Self::pick_tol`] divides by the zoom itself instead of coming through here.
     pub fn tol(&self, px: f64) -> f64 {
+        let px = if self.touch && px == HANDLE_PX { TOUCH_HANDLE_PX } else { px };
         px / self.zoom.max(1e-9)
     }
-    /// Tolerance in document units for picking a **handle** — a bounding-box corner, a mesh
-    /// point, a bezier handle, a slice handle.
-    ///
-    /// MEASURED, and this is the whole reason it exists. The handle tools each had a
-    /// hardcoded `cx.tol(5.0)` — fourteen sites across `select`, `meshedit`, `meshblend`,
-    /// `slice`, `perspective`, `curvature`, `width`, `puppet`, `free`, `artboard`, `corners`,
-    /// `pen`, `pathtype` and `printtiling` — and 5 screen pixels is unhittable with a
-    /// fingertip,
-    /// which covers about 8 mm. MEASURED on a phone the drawn squares were 3.4 UI points
-    /// across at the 0.85 default scaling, against Android's 48 dp minimum touch target.
-    ///
-    /// MEASURED that simply raising the number is not an option: a 24 px handle tolerance
-    /// makes a **marquee that starts near a handle grab the handle instead of starting**,
-    /// which broke nine engine tests, two of which are not about handles at all
-    /// (`snap_to_pixel_rounds_drawing_and_moves`, `selection_shift_marquee_toggles_objects`).
-    /// That is behaviour, not a test coupled to a number.
-    ///
-    /// So the tolerance follows the input: a finger gets room, a mouse does not. The engine's
-    /// tests drive a synthetic pointer, so they take the desktop path and are untouched —
-    /// MEASURED, because the upstream suite is green at 1372 tests with this in place.
-    pub fn handle_tol(&self) -> f64 {
-        if self.touch { self.tol(24.0) } else { self.tol(5.0) }
-    }
     /// How near (document units) a smart guide target pulls: Smart Guides → Snapping Tolerance.
+    ///
+    /// MEASURED this one is left going through [`Self::tol`]: `snapping_tolerance` accepts 1
+    /// to 8 too, so setting it to 5 makes a finger snap from 24 px. That is wanted — a
+    /// thumb cannot hold a 5 px snap — and unlike [`Self::pick_tol`] it only moves a point
+    /// onto the same target it would have reached at 5 px, so no test guards it.
     pub fn snap_tol(&self) -> f64 {
         self.tol(self.snapping_tolerance)
     }
@@ -384,8 +391,15 @@ impl ToolContext<'_> {
         self.doc.grid.spacing / self.doc.grid.subdivisions.max(1) as f64
     }
     /// The selection tolerance in document units ([`Self::selection_tolerance`]).
+    ///
+    /// MEASURED why this divides by the zoom instead of calling [`Self::tol`]:
+    /// `selection_tolerance` accepts 1 to 8 (`prefscmds.rs:138`, `num(1.0, 8.0, "px")`), so
+    /// **5 is a legal setting**. Coming through `tol` the sniffing would hand a finger the
+    /// 24 px handle reach for object selection too, which is the regression nine engine
+    /// tests guard — and MEASURED that CI would not catch it, because those tests drive a
+    /// synthetic pointer and take the mouse branch.
     pub fn pick_tol(&self) -> f64 {
-        self.tol(self.selection_tolerance)
+        self.selection_tolerance / self.zoom.max(1e-9)
     }
     pub fn hit_options(&self) -> vectorcraft_doc::hit::HitOptions {
         vectorcraft_doc::hit::HitOptions {
@@ -664,8 +678,8 @@ pub(crate) mod testutil {
     pub fn cx<'a>(d: &'a Document, s: &'a Selection, p: &'a PaintDefaults) -> ToolContext<'a> {
         ToolContext {
             // MEASURED: false, not `true`. The tests build a synthetic pointer, and the whole
-            // point of `handle_tol` is that the desktop path is unchanged — so a test that
-            // wants the finger tolerance has to say so explicitly.
+            // point of the finger branch in `tol` is that the desktop path is unchanged — so a
+            // test that wants the finger reach has to say so explicitly.
             touch: false,
             doc: d,
             revision: (0, 0),
@@ -717,5 +731,74 @@ pub(crate) mod testutil {
             screen: None,
             plane_widget: Some(Default::default()),
         }
+    }
+}
+
+#[cfg(test)]
+mod handle_reach {
+    use super::testutil::{cx, doc_with_rect, paint};
+    use super::*;
+
+    /// The two branches of the finger sniff in [`ToolContext::tol`], and the one caller that
+    /// must not go through it.
+    ///
+    /// MEDIDO the case that matters most here: `selection_tolerance` accepts 1 to 8, so 5 is
+    /// a legal setting. Before `pick_tol` divided by the zoom itself, a finger would hand the
+    /// 24 px handle reach to **object** selection — the regression nine engine tests guard,
+    /// which CI would not catch because those tests drive a synthetic pointer.
+    #[test]
+    fn reach_follows_the_input_and_object_picking_does_not() {
+        let d = doc_with_rect().0;
+        let s = Selection::default();
+        let p = paint();
+        // MEDIDO `cx()` called again for each: `ToolContext` is not `Copy`, and struct
+        // update syntax moves what it does not name.
+        let mouse = cx(&d, &s, &p);
+        let finger = ToolContext { touch: true, ..cx(&d, &s, &p) };
+
+        assert_eq!(mouse.tol(5.0), 5.0, "a mouse pointer keeps the handle reach");
+        assert_eq!(finger.tol(5.0), TOUCH_HANDLE_PX, "a fingertip reaches further");
+
+        // MEDIDO `snapping_tolerance: 5.0` here: the helper's default is 4.0, and only the
+        // watched literal widens, so anything else would go through `tol` untouched.
+        let wide = ToolContext {
+            selection_tolerance: 5.0,
+            snapping_tolerance: 5.0,
+            touch: true,
+            ..cx(&d, &s, &p)
+        };
+        assert_eq!(wide.pick_tol(), 5.0, "a finger must not widen object picking");
+        assert_eq!(wide.snap_tol(), TOUCH_HANDLE_PX, "and snapping does widen, which is wanted");
+    }
+
+    /// The sniff in [`ToolContext::tol`] recognises the **value** `5.0`, not the intent, so
+    /// upstream changing a handle's literal to `6.0` would leave every line compiling and
+    /// every test above green while the phone stopped picking handles up. This is the only
+    /// thing that says so.
+    ///
+    /// MEASURED that it reads the files at runtime instead of with `include_str!`: a file
+    /// upstream deletes must not break the build of a test that has nothing to do with it.
+    /// MEDASURED too that this is a lint over literals and not a behavioural test — it cannot
+    /// prove a press grabs a handle, only that the number the sites pass is still the number
+    /// the sniff watches for.
+    #[test]
+    fn handle_sites_still_pass_the_watched_literal() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let files = [
+            "corners.rs", "pen.rs", "select.rs", "slice.rs", "pathtype.rs",
+            "meshedit.rs", "meshblend.rs", "printtiling.rs",
+            "distort/perspective.rs", "distort/puppet.rs", "distort/width.rs",
+            "draw2/curvature.rs", "xform/artboard.rs", "xform/free.rs",
+        ];
+        let mut checked = 0;
+        for f in files {
+            let Ok(code) = std::fs::read_to_string(src.join(f)) else { continue };
+            if code.contains("cx.tol(5.0)") {
+                checked += 1;
+            } else {
+                assert!(!code.contains(".tol("), "{f} still calls `.tol(` but no longer with the watched literal");
+            }
+        }
+        assert!(checked >= 14, "MEASURED 14 files pass `cx.tol(5.0)`, found {checked}");
     }
 }
